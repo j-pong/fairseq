@@ -123,6 +123,58 @@ def _collate_frames(
     return out
 
 
+def _split_target_to_words(
+    target: torch.Tensor, target_mask: List[bool], n_gram_sample = False
+) -> List[torch.Tensor]:
+    target = target.tolist() if type(target) == torch.Tensor else target
+    # chache of processing loop
+    prev_m = target_mask[0]
+    target_ = [[target[0]]]
+
+    # grouping word-level segement of text units
+    for m, t in zip(target_mask[1:], target[1:]):
+        if prev_m and not m:
+            prev_t = target_.pop()
+            target_.append(prev_t + [t])
+        elif prev_m and m:
+            target_.append([t])
+    target = target_
+
+    # random sampling
+    if n_gram_sample:
+        raise NotImplementedError
+        len_target = len(target_)
+        n_gram = torch.randint(low=5, high=10, size=(1,)).item()
+        end_idx = torch.randint(low=n_gram, high=len_target, size=(1,))
+        target = target_[max(end_idx - n_gram, 0) : end_idx] # W x T -> n_gram x T 
+    target = [torch.tensor(t) for t in target]
+
+    return target
+
+
+def _collate_batch_padding(
+    xs: List[torch.Tensor], rank: int = 2, pad_value: float = 0.0, max_len: float = None
+) -> torch.Tensor:
+    if type(xs[0]) == torch.Tensor:
+        if max_len is None:
+            max_len = max(x.size(0) for x in xs)
+        if rank == 2:
+            out = xs[0].new_ones((len(xs), max_len)) * pad_value
+        elif rank == 3:
+            out = xs[0].new_ones((len(xs), max_len, xs[0].size(1))) * pad_value
+        elif rank == 4:
+            out = xs[0].new_ones((len(xs), max_len, xs[0].size(1), xs[0].size(2))) * pad_value
+        else:
+            raise AttributeError
+    
+        for i, v in enumerate(xs):
+            out[i, : v.size(0)] = v
+    else:
+        raise ValueError(xs.size()) 
+
+    return out
+
+
 @dataclass
 class SpeechToTextDatasetItem(object):
     index: int
@@ -141,6 +193,7 @@ class SpeechToTextDataset(FairseqDataset):
         cfg: S2TDataConfig,
         audio_paths: List[str],
         n_frames: List[int],
+        audio_durs: Optional[List[int]] = None,
         src_texts: Optional[List[str]] = None,
         tgt_texts: Optional[List[str]] = None,
         speakers: Optional[List[str]] = None,
@@ -156,6 +209,7 @@ class SpeechToTextDataset(FairseqDataset):
         self.split, self.is_train_split = split, is_train_split
         self.cfg = cfg
         self.audio_paths, self.n_frames = audio_paths, n_frames
+        self.audio_durs = audio_durs
         self.n_samples = len(audio_paths)
         assert len(n_frames) == self.n_samples > 0
         assert src_texts is None or len(src_texts) == self.n_samples
@@ -277,6 +331,22 @@ class SpeechToTextDataset(FairseqDataset):
         speaker_id = None
         if self.speaker_to_id is not None:
             speaker_id = self.speaker_to_id[self.speakers[index]]
+
+        source_mask = None
+        target_mask = None
+        if self.audio_durs is not None:
+            source_mask = self.audio_durs[index]
+            source = [source[d[0] : d[1]] for d in source_mask]
+
+            target_mask = [t.find("▁") != -1 for t in tokenized.split()]
+            # target_length = [len(t.replace("▁", "")) for t in tokenized.split()]
+            # target_length = _split_target_to_words(target_length, target_mask)
+            # target_length = [l.sum() for l in target_length]
+            target = _split_target_to_words(target, target_mask)
+
+            # remove residual freames
+            source = source[:len(target)]
+
         return SpeechToTextDatasetItem(
             index=index, source=source, target=target, speaker_id=speaker_id
         )
@@ -290,37 +360,77 @@ class SpeechToTextDataset(FairseqDataset):
         if len(samples) == 0:
             return {}
         indices = torch.tensor([x.index for x in samples], dtype=torch.long)
-        frames = _collate_frames([x.source for x in samples], self.cfg.use_audio_input)
-        # sort samples by descending number of frames
-        n_frames = torch.tensor([x.source.size(0) for x in samples], dtype=torch.long)
-        n_frames, order = n_frames.sort(descending=True)
-        indices = indices.index_select(0, order)
-        frames = frames.index_select(0, order)
 
-        target, target_lengths = None, None
-        prev_output_tokens = None
-        ntokens = None
-        if self.tgt_texts is not None:
-            target = fairseq_data_utils.collate_tokens(
-                [x.target for x in samples],
-                self.tgt_dict.pad(),
-                self.tgt_dict.eos(),
-                left_pad=False,
-                move_eos_to_beginning=False,
-            )
-            target = target.index_select(0, order)
-            target_lengths = torch.tensor(
-                [x.target.size(0) for x in samples], dtype=torch.long
-            ).index_select(0, order)
-            prev_output_tokens = fairseq_data_utils.collate_tokens(
-                [x.target for x in samples],
-                self.tgt_dict.pad(),
-                self.tgt_dict.eos(),
-                left_pad=False,
-                move_eos_to_beginning=True,
-            )
-            prev_output_tokens = prev_output_tokens.index_select(0, order)
-            ntokens = sum(x.target.size(0) for x in samples)
+        # duration split process for alignment
+        frames_durations, target_durations = None, None
+        if self.audio_durs is not None:
+            # frames_durations = [torch.tensor([
+            #     [d[0], d[1]] for d in x.source_mask
+            # ], dtype=torch.long) for x in samples]
+            # frames_durations = _collate_batch_padding(frames_durations, rank = 3, pad_value=-1)
+            # frames_durations = frames_durations.index_select(0, order)
+
+            frames = [x.source for x in samples]
+            n_frames = torch.cat([torch.tensor([f.size(0) for f in frame]) for frame in frames], axis=0) # B x W
+            n_frames, order = n_frames.sort(descending=True)
+            frames = [_collate_batch_padding(x.source, rank=3, pad_value=0.0, max_len=n_frames[0]) for x in samples]
+            # frames = _collate_batch_padding(frames, rank=4, pad_value=0.0)
+            # sz = frames.size()
+            # frames = frames.view(sz[0] * sz[1], sz[2], sz[3])
+            frames = torch.cat(frames, 0)
+            frames = frames.index_select(0, order)
+
+            target, target_lengths = None, None
+            prev_output_tokens = None
+            ntokens = None
+            if self.tgt_texts is not None:
+                # target_durations = [torch.tensor(x.target_mask).long() for x in samples]
+                # target_durations = _collate_batch_padding(target_durations, rank = 2, pad_value=-1)
+                # target_durations = target_durations.index_select(0, order)
+    
+                target = [x.target for x in samples] # batch, word, units
+                target_lengths = torch.cat([torch.tensor([t.size(0) for t in tar]) for tar in target]).index_select(0, order)
+                target = [_collate_batch_padding(tar, rank=2, pad_value=self.tgt_dict.pad(), max_len=target_lengths.max(-1)[0]) for tar in target]
+                # target = _collate_batch_padding(target, rank=3, pad_value=self.tgt_dict.pad())
+                # sz = target.size()
+                # target = target.view(sz[0] * sz[1], sz[2])
+                target = torch.cat(target, 0)
+                target = target.index_select(0, order)
+                prev_output_tokens = target
+                ntokens = target_lengths.sum().item()
+            
+        else:
+            frames = _collate_frames([x.source for x in samples], self.cfg.use_audio_input)
+            # sort samples by descending number of frames
+            n_frames = torch.tensor([x.source.size(0) for x in samples], dtype=torch.long)
+            n_frames, order = n_frames.sort(descending=True)
+            indices = indices.index_select(0, order)
+            frames = frames.index_select(0, order)
+
+            target, target_lengths = None, None
+            prev_output_tokens = None
+            ntokens = None
+            if self.tgt_texts is not None:
+                target = fairseq_data_utils.collate_tokens(
+                    [x.target for x in samples],
+                    self.tgt_dict.pad(),
+                    self.tgt_dict.eos(),
+                    left_pad=False,
+                    move_eos_to_beginning=False,
+                )
+                target = target.index_select(0, order)
+                target_lengths = torch.tensor(
+                    [x.target.size(0) for x in samples], dtype=torch.long
+                ).index_select(0, order)
+                prev_output_tokens = fairseq_data_utils.collate_tokens(
+                    [x.target for x in samples],
+                    self.tgt_dict.pad(),
+                    self.tgt_dict.eos(),
+                    left_pad=False,
+                    move_eos_to_beginning=True,
+                )
+                prev_output_tokens = prev_output_tokens.index_select(0, order)
+                ntokens = sum(x.target.size(0) for x in samples)
 
         speaker = None
         if self.speaker_to_id is not None:
@@ -333,7 +443,8 @@ class SpeechToTextDataset(FairseqDataset):
         net_input = {
             "src_tokens": frames,
             "src_lengths": n_frames,
-            "prev_output_tokens": prev_output_tokens,
+            "prev_output_tokens": target,
+            "prev_output_tokens_length": target_lengths,
         }
         out = {
             "id": indices,
@@ -407,12 +518,17 @@ class SpeechToTextDatasetCreator(object):
         speakers = [s.get(cls.KEY_SPEAKER, cls.DEFAULT_SPEAKER) for s in samples]
         src_langs = [s.get(cls.KEY_SRC_LANG, cls.DEFAULT_LANG) for s in samples]
         tgt_langs = [s.get(cls.KEY_TGT_LANG, cls.DEFAULT_LANG) for s in samples]
+        audio_durs = [
+            [[int(d.split()[0]), int(d.split()[1])] for d in s.get("durations").split("|")[:-1]] 
+            for s in samples
+        ]
         return SpeechToTextDataset(
             split_name,
             is_train_split,
             cfg,
             audio_paths,
             n_frames,
+            audio_durs=audio_durs,
             src_texts=src_texts,
             tgt_texts=tgt_texts,
             speakers=speakers,
