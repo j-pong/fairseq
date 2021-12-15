@@ -9,6 +9,7 @@ from numpy import AxisError
 
 import torch
 import torch.nn as nn
+import warp_rnnt
 from fairseq import checkpoint_utils, utils
 from fairseq.data.data_utils import lengths_to_padding_mask
 from fairseq.models import (
@@ -70,13 +71,14 @@ class Conv1dSubsampler(nn.Module):
 
 @register_model("contra_transformer")
 class ContraTransformerModel(BaseFairseqModel):
-    def __init__(self, args, encoder, decoder):
+    def __init__(self, args, encoder, encoder_proj, decoder, decoder_proj, joint):
         super().__init__()
 
         self.encoder = encoder
         self.decoder = decoder
-        self.encoder_proj = nn.Linear(args.encoder_embed_dim, args.encoder_embed_dim)
-        self.decoder_proj = nn.Linear(args.decoder_embed_dim, args.decoder_embed_dim)
+        self.encoder_proj = encoder_proj 
+        self.decoder_proj = decoder_proj 
+        self.joint = joint
 
     @staticmethod
     def add_args(parser):
@@ -197,6 +199,11 @@ class ContraTransformerModel(BaseFairseqModel):
             metavar="N",
             help="freeze encoder for first N updates",
         )
+        parser.add_argument(
+            "--no-finetuning",
+            action="store_true",
+            help="if True, dont finetune models",
+        )
 
     @classmethod
     def build_encoder(cls, args):
@@ -236,7 +243,17 @@ class ContraTransformerModel(BaseFairseqModel):
         )
         encoder = cls.build_encoder(args)
         decoder = cls.build_decoder(args, task, decoder_embed_tokens)
-        return cls(args, encoder, decoder)
+        encoder_proj = nn.Linear(args.encoder_embed_dim, args.encoder_embed_dim)
+        decoder_proj = nn.Linear(args.decoder_embed_dim, args.decoder_embed_dim)
+        no_finetuning = getattr(args, "no_finetuning", False)
+        if not no_finetuning:
+            joint = nn.Linear(
+                args.decoder_embed_dim,
+                len(task.target_dictionary)
+            )
+        else:
+            joint=None
+        return cls(args, encoder, encoder_proj, decoder, decoder_proj, joint)
     
     def get_targets(self, sample, net_output):
         bsz = sample["target"].size(0)
@@ -249,28 +266,26 @@ class ContraTransformerModel(BaseFairseqModel):
         log_probs: bool,
         sample: Optional[Dict[str, Tensor]] = None,
     ):
-        # net_output['encoder_out'] is a (B, T, D) tensor
+        # net_output['encoder_out'] is a (T, B, D) tensor
         encoder_output, decoder_output = net_output
         encoder_output = encoder_output["encoder_out"][0]
         decoder_output = decoder_output["encoder_out"][0]
         encoder_output = self.encoder_proj(encoder_output)
         decoder_output = self.decoder_proj(decoder_output)
-        encoder_output = encoder_output.mean(0)
-        decoder_output = decoder_output.mean(0)
-        encoder_output = encoder_output / torch.norm(encoder_output, dim=-1, keepdim=True)
-        decoder_output = decoder_output / torch.norm(decoder_output, dim=-1, keepdim=True)
 
-        logits = encoder_output @ decoder_output.transpose(1, 0)
+        logits = self.joint(
+            encoder_output.transpose(1, 0).unsqueeze(1) + 
+            decoder_output.transpose(1, 0).unsqueeze(2)
+        )
         logits = logits.float()
 
         import torch.nn.functional as F
         if log_probs:
-            lprobs = [F.log_softmax(logits, dim=0), F.log_softmax(logits, dim=1)]
+            lprobs = F.log_softmax(logits, dim=-1)
         else:
-            lprobs = [F.softmax(logits, dim=0), F.softmax(logits, dim=1)]
+            lprobs = F.softmax(logits, dim=-1)
 
-        lprobs[0].batch_first = True
-        lprobs[1].batch_first = True
+        lprobs.batch_first = True
         return lprobs
 
     def forward(self, src_tokens, src_lengths, prev_output_tokens, prev_output_tokens_length):
@@ -567,6 +582,14 @@ def base_architecture(args):
 
 
 @register_model_architecture("contra_transformer", "contra_transformer_s")
+def s2t_transformer_s(args):
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
+    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
+    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 4)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 4)
+    args.dropout = getattr(args, "dropout", 0.1)
+    base_architecture(args)
+
 def s2t_transformer_s(args):
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)

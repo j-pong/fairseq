@@ -362,14 +362,7 @@ class SpeechToTextDataset(FairseqDataset):
         indices = torch.tensor([x.index for x in samples], dtype=torch.long)
 
         # duration split process for alignment
-        frames_durations, target_durations = None, None
         if self.audio_durs is not None:
-            # frames_durations = [torch.tensor([
-            #     [d[0], d[1]] for d in x.source_mask
-            # ], dtype=torch.long) for x in samples]
-            # frames_durations = _collate_batch_padding(frames_durations, rank = 3, pad_value=-1)
-            # frames_durations = frames_durations.index_select(0, order)
-
             frames = [x.source for x in samples]
             n_frames = torch.cat([torch.tensor([f.size(0) for f in frame]) for frame in frames], axis=0) # B x W
             n_frames, order = n_frames.sort(descending=True)
@@ -384,10 +377,6 @@ class SpeechToTextDataset(FairseqDataset):
             prev_output_tokens = None
             ntokens = None
             if self.tgt_texts is not None:
-                # target_durations = [torch.tensor(x.target_mask).long() for x in samples]
-                # target_durations = _collate_batch_padding(target_durations, rank = 2, pad_value=-1)
-                # target_durations = target_durations.index_select(0, order)
-    
                 target = [x.target for x in samples] # batch, word, units
                 target_lengths = torch.cat([torch.tensor([t.size(0) for t in tar]) for tar in target]).index_select(0, order)
                 target = [_collate_batch_padding(tar, rank=2, pad_value=self.tgt_dict.pad(), max_len=target_lengths.max(-1)[0]) for tar in target]
@@ -518,10 +507,13 @@ class SpeechToTextDatasetCreator(object):
         speakers = [s.get(cls.KEY_SPEAKER, cls.DEFAULT_SPEAKER) for s in samples]
         src_langs = [s.get(cls.KEY_SRC_LANG, cls.DEFAULT_LANG) for s in samples]
         tgt_langs = [s.get(cls.KEY_TGT_LANG, cls.DEFAULT_LANG) for s in samples]
-        audio_durs = [
-            [[int(d.split()[0]), int(d.split()[1])] for d in s.get("durations").split("|")[:-1]] 
-            for s in samples
-        ]
+        if "durations" in samples[0].keys():
+            audio_durs = [
+                [[int(d.split()[0]), int(d.split()[1])] for d in s.get("durations").split("|")[:-1]] 
+                for s in samples
+            ]
+        else:
+            audio_durs = None
         return SpeechToTextDataset(
             split_name,
             is_train_split,
