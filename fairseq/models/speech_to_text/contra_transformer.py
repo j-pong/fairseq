@@ -254,11 +254,6 @@ class ContraTransformerModel(BaseFairseqModel):
         else:
             joint=None
         return cls(args, encoder, encoder_proj, decoder, decoder_proj, joint)
-    
-    def get_targets(self, sample, net_output):
-        bsz = sample["target"].size(0)
-        target = torch.arange(bsz).to(sample["target"].device)
-        return target
 
     def get_normalized_probs(
         self,
@@ -274,8 +269,8 @@ class ContraTransformerModel(BaseFairseqModel):
         decoder_output = self.decoder_proj(decoder_output)
 
         logits = self.joint(
-            encoder_output.transpose(1, 0).unsqueeze(1) + 
-            decoder_output.transpose(1, 0).unsqueeze(2)
+            encoder_output.transpose(1, 0).unsqueeze(2) + 
+            decoder_output.transpose(1, 0).unsqueeze(1)
         )
         logits = logits.float()
 
@@ -477,6 +472,7 @@ class S2TTransformerEncoder(FairseqEncoder):
             else [],  # B x T
             "encoder_embedding": [],  # B x T x C
             "encoder_states": encoder_states,  # List[T x B x C]
+            "input_lengths": input_lengths,
             "src_tokens": [],
             "src_lengths": [],
         }
@@ -590,7 +586,20 @@ def s2t_transformer_s(args):
     args.dropout = getattr(args, "dropout", 0.1)
     base_architecture(args)
 
+@register_model_architecture("contra_transformer", "contra_transformer_m")
 def s2t_transformer_s(args):
+    args.encoder_layers = getattr(args, "encoder_layers", 12)
+    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
+    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
+    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 4)
+    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 4)
+    args.dropout = getattr(args, "dropout", 0.1)
+    base_architecture(args)
+
+
+@register_model_architecture("contra_transformer", "contra_transformer_l")
+def s2t_transformer_s(args):
+    args.encoder_layers = getattr(args, "encoder_layers", 18)
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
     args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 4)
