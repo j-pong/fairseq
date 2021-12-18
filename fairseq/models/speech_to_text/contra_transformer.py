@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 
-from json import encoder
 import logging
 import math
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
-from numpy import AxisError
 
 import torch
 import torch.nn as nn
-import warp_rnnt
 from fairseq import checkpoint_utils, utils
 from fairseq.data.data_utils import lengths_to_padding_mask
 from fairseq.models import (
@@ -152,26 +149,26 @@ class ContraTransformerModel(BaseFairseqModel):
             metavar="N",
             help="decoder embedding dimension",
         )
-        # parser.add_argument(
-        #     "--decoder-ffn-embed-dim",
-        #     type=int,
-        #     metavar="N",
-        #     help="decoder embedding dimension for FFN",
-        # )
+        parser.add_argument(
+            "--decoder-ffn-embed-dim",
+            type=int,
+            metavar="N",
+            help="decoder embedding dimension for FFN",
+        )
         parser.add_argument(
             "--decoder-layers", type=int, metavar="N", help="num decoder layers"
         )
-        # parser.add_argument(
-        #     "--decoder-attention-heads",
-        #     type=int,
-        #     metavar="N",
-        #     help="num decoder attention heads",
-        # )
-        # parser.add_argument(
-        #     "--decoder-normalize-before",
-        #     action="store_true",
-        #     help="apply layernorm before each decoder block",
-        # )
+        parser.add_argument(
+            "--decoder-attention-heads",
+            type=int,
+            metavar="N",
+            help="num decoder attention heads",
+        )
+        parser.add_argument(
+            "--decoder-normalize-before",
+            action="store_true",
+            help="apply layernorm before each decoder block",
+        )
         parser.add_argument(
             "--share-decoder-input-output-embed",
             action="store_true",
@@ -587,7 +584,7 @@ def s2t_transformer_s(args):
     base_architecture(args)
 
 @register_model_architecture("contra_transformer", "contra_transformer_m")
-def s2t_transformer_s(args):
+def s2t_transformer_m(args):
     args.encoder_layers = getattr(args, "encoder_layers", 12)
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
@@ -598,7 +595,7 @@ def s2t_transformer_s(args):
 
 
 @register_model_architecture("contra_transformer", "contra_transformer_l")
-def s2t_transformer_s(args):
+def s2t_transformer_l(args):
     args.encoder_layers = getattr(args, "encoder_layers", 18)
     args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
     args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
