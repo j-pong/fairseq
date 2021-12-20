@@ -37,7 +37,7 @@ class Sequence(object):
             self.h = seq.h
             self.logp = seq.logp
 @register_criterion("transducer", dataclass=TransducerCriterionConfig)
-class CrossEntropyCriterion(FairseqCriterion):
+class Transducer(FairseqCriterion):
     def __init__(self, task, sentence_avg):
         super().__init__(task)
         self.sentence_avg = sentence_avg
@@ -167,6 +167,7 @@ class CrossEntropyCriterion(FairseqCriterion):
 
         return loss, loss
     
+    @torch.no_grad()
     def compute_accuracy(self, model, net_output, sample):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
         target = model.get_targets(sample, net_output)
@@ -177,8 +178,8 @@ class CrossEntropyCriterion(FairseqCriterion):
         max_score_idx = max_score.argmax(-2) # B, U
         max_score_idx = max_score_idx.view(bsz * usz)
 
-        label_matrix = lprobs.argmax(-1).permute(0, 2, 1) # B, U, T
-        label_matrix = label_matrix.view(bsz * usz, tsz)
+        label_matrix = lprobs.argmax(-1).transpose(2, 1) # B, U, T
+        label_matrix = label_matrix.reshape(bsz * usz, tsz)
         target_pred = label_matrix[torch.arange(bsz * usz), max_score_idx].view(bsz, usz)
 
         n_correct = torch.sum(

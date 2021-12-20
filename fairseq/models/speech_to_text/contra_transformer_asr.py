@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
+from dataclasses import dataclass
+from json import encoder
 import logging
 import math
+from re import S
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
@@ -15,17 +18,75 @@ from fairseq.models import (
     register_model,
     register_model_architecture,
 )
-from fairseq.models.transformer import Embedding 
+from fairseq.models.transformer import Embedding
+from fairseq.modules.transformer_layer import TransformerEncoderLayerBase
+from fairseq.models.transformer.transformer_config import TransformerConfig, EncDecBaseConfig, QuantNoiseConfig
 from fairseq.modules import (
     FairseqDropout,
     LayerNorm,
     PositionalEmbedding,
-    TransformerEncoderLayer,
 )
 from torch import Tensor
 
 
 logger = logging.getLogger(__name__)
+
+from dataclasses import fields
+from fairseq.utils import safe_hasattr, safe_getattr
+
+class MultiTransformerEncoderConfig(TransformerConfig):
+    @classmethod
+    def from_namespace(cls, args, encoder_prefix="speech"):
+        if args is None:
+            return None
+        if not isinstance(args, cls):
+            seen = set()
+            config = cls()
+            for fld in fields(cls):
+                if fld.name == "encoder":
+                    if safe_hasattr(args, "encoder"):
+                        seen.add("encoder")
+                        config.encoder = EncDecBaseConfig(**args.encoder)
+                    else:
+                        config.encoder = cls._copy_keys(
+                            args, EncDecBaseConfig, f"{encoder_prefix}_encoder", seen
+                        )
+                elif fld.name == "quant_noise":
+                    if safe_hasattr(args, "quant_noise"):
+                        seen.add("quant_noise")
+                        config.quant_noise = QuantNoiseConfig(**args.quant_noise)
+                    else:
+                        config.quant_noise = cls._copy_keys(
+                            args, QuantNoiseConfig, "quant_noise", seen
+                        )
+                elif safe_hasattr(args, fld.name):
+                    seen.add(fld.name)
+                    setattr(config, fld.name, safe_getattr(args, fld.name))
+            args_dict = (
+                args._asdict()
+                if safe_hasattr(args, "_asdict")
+                else vars(args)
+                if safe_hasattr(args, "__dict__")
+                else {}
+            )  # namedtupled doesn't have __dict__ :-/
+            for key, value in args_dict.items():
+                if key not in seen:
+                    setattr(config, key, value)
+            return config
+        else:
+            return args
+
+
+class TransformerEncoderLayer(TransformerEncoderLayerBase):
+    def __init__(self, args, encoder_prefix):
+        self.encoder_prefix = encoder_prefix
+        super().__init__(MultiTransformerEncoderConfig.from_namespace(args, encoder_prefix=encoder_prefix))
+        self.args = args
+
+    def build_self_attention(self, embed_dim, args):
+        return super().build_self_attention(
+            embed_dim, MultiTransformerEncoderConfig.from_namespace(args, encoder_prefix=self.encoder_prefix)
+        )
 
 
 class Conv1dSubsampler(nn.Module):
@@ -66,21 +127,21 @@ class Conv1dSubsampler(nn.Module):
         return x, self.get_out_seq_lens_tensor(src_lengths)
 
 
-@register_model("contra_transformer")
-class ContraTransformerModel(BaseFairseqModel):
-    def __init__(self, args, encoder, encoder_proj, decoder, decoder_proj, joint):
+@register_model("contra_transformer_transducer")
+class ContraTransformerTransducer(BaseFairseqModel):
+    def __init__(self, args, speech_encoder, speech_encoder_proj, text_encoder, text_encoder_proj, joint):
         super().__init__()
 
-        self.encoder = encoder
-        self.decoder = decoder
-        self.encoder_proj = encoder_proj 
-        self.decoder_proj = decoder_proj 
+        self.speech_encoder = speech_encoder
+        self.speech_encoder_proj = speech_encoder_proj
+        self.text_encoder = text_encoder
+        self.text_encoder_proj = text_encoder_proj
         self.joint = joint
 
     @staticmethod
     def add_args(parser):
         """Add model-specific arguments to the parser."""
-        # input
+        # speech encoder
         parser.add_argument(
             "--conv-kernel-sizes",
             type=str,
@@ -93,7 +154,7 @@ class ContraTransformerModel(BaseFairseqModel):
             metavar="N",
             help="# of channels in Conv1d subsampling layers",
         )
-        # Transformer
+        # transformer
         parser.add_argument(
             "--activation-fn",
             type=str,
@@ -118,63 +179,6 @@ class ContraTransformerModel(BaseFairseqModel):
             help="dropout probability after activation in FFN.",
         )
         parser.add_argument(
-            "--encoder-embed-dim",
-            type=int,
-            metavar="N",
-            help="encoder embedding dimension",
-        )
-        parser.add_argument(
-            "--encoder-ffn-embed-dim",
-            type=int,
-            metavar="N",
-            help="encoder embedding dimension for FFN",
-        )
-        parser.add_argument(
-            "--encoder-layers", type=int, metavar="N", help="num encoder layers"
-        )
-        parser.add_argument(
-            "--encoder-attention-heads",
-            type=int,
-            metavar="N",
-            help="num encoder attention heads",
-        )
-        parser.add_argument(
-            "--encoder-normalize-before",
-            action="store_true",
-            help="apply layernorm before each encoder block",
-        )
-        parser.add_argument(
-            "--decoder-embed-dim",
-            type=int,
-            metavar="N",
-            help="decoder embedding dimension",
-        )
-        parser.add_argument(
-            "--decoder-ffn-embed-dim",
-            type=int,
-            metavar="N",
-            help="decoder embedding dimension for FFN",
-        )
-        parser.add_argument(
-            "--decoder-layers", type=int, metavar="N", help="num decoder layers"
-        )
-        parser.add_argument(
-            "--decoder-attention-heads",
-            type=int,
-            metavar="N",
-            help="num decoder attention heads",
-        )
-        parser.add_argument(
-            "--decoder-normalize-before",
-            action="store_true",
-            help="apply layernorm before each decoder block",
-        )
-        parser.add_argument(
-            "--share-decoder-input-output-embed",
-            action="store_true",
-            help="share decoder input and output embeddings",
-        )
-        parser.add_argument(
             "--layernorm-embedding",
             action="store_true",
             help="add layernorm to embedding",
@@ -196,31 +200,80 @@ class ContraTransformerModel(BaseFairseqModel):
             metavar="N",
             help="freeze encoder for first N updates",
         )
+        # speech encoder transformer
         parser.add_argument(
-            "--no-finetuning",
+            "--speech-encoder-embed-dim",
+            type=int,
+            metavar="N",
+            help="encoder embedding dimension",
+        )
+        parser.add_argument(
+            "--speech-encoder-ffn-embed-dim",
+            type=int,
+            metavar="N",
+            help="encoder embedding dimension for FFN",
+        )
+        parser.add_argument(
+            "--speech-encoder-layers", type=int, metavar="N", help="num encoder layers"
+        )
+        parser.add_argument(
+            "--speech-encoder-attention-heads",
+            type=int,
+            metavar="N",
+            help="num encoder attention heads",
+        )
+        parser.add_argument(
+            "--speech-encoder-normalize-before",
             action="store_true",
-            help="if True, dont finetune models",
+            help="apply layernorm before each encoder block",
+        )
+        # text encoder
+        parser.add_argument(
+            "--text-encoder-embed-dim",
+            type=int,
+            metavar="N",
+            help="encoder embedding dimension",
+        )
+        parser.add_argument(
+            "--text-encoder-ffn-embed-dim",
+            type=int,
+            metavar="N",
+            help="encoder embedding dimension for FFN",
+        )
+        parser.add_argument(
+            "--text-encoder-layers", type=int, metavar="N", help="num encoder layers"
+        )
+        parser.add_argument(
+            "--text-encoder-attention-heads",
+            type=int,
+            metavar="N",
+            help="num encoder attention heads",
+        )
+        parser.add_argument(
+            "--text-encoder-normalize-before",
+            action="store_true",
+            help="apply layernorm before each encoder block",
         )
 
     @classmethod
-    def build_encoder(cls, args):
-        encoder = S2TTransformerEncoder(args)
-        pretraining_path = getattr(args, "load_pretrained_encoder_from", None)
-        if pretraining_path is not None:
-            if not Path(pretraining_path).exists():
-                logger.warning(
-                    f"skipped pretraining because {pretraining_path} does not exist"
-                )
-            else:
-                encoder = checkpoint_utils.load_pretrained_component_from_model(
-                    component=encoder, checkpoint=pretraining_path
-                )
-                logger.info(f"loaded pretrained encoder from: {pretraining_path}")
+    def build_speech_encoder(cls, args):
+        encoder = SpeechTransformerEncoder(args)
+        # pretraining_path = getattr(args, "load_pretrained_encoder_from", None)
+        # if pretraining_path is not None:
+        #     if not Path(pretraining_path).exists():
+        #         logger.warning(
+        #             f"skipped pretraining because {pretraining_path} does not exist"
+        #         )
+        #     else:
+        #         encoder = checkpoint_utils.load_pretrained_component_from_model(
+        #             component=encoder, checkpoint=pretraining_path
+        #         )
+        #         logger.info(f"loaded pretrained encoder from: {pretraining_path}")
         return encoder
 
     @classmethod
-    def build_decoder(cls, args, task, embed_tokens):
-        encoder = LTTTransformerEncoder(args, task.target_dictionary, embed_tokens)
+    def build_text_encoder(cls, args, task, embed_tokens):
+        encoder = TextTransformerEncoder(args, task.target_dictionary, embed_tokens)
         return encoder
 
     @classmethod
@@ -235,22 +288,20 @@ class ContraTransformerModel(BaseFairseqModel):
             padding_idx = dictionary.pad()
             return Embedding(num_embeddings, embed_dim, padding_idx)
 
-        decoder_embed_tokens = build_embedding(
-            task.target_dictionary, args.decoder_embed_dim
+        text_encoder_embed_tokens = build_embedding(
+            task.target_dictionary, args.text_encoder_embed_dim
         )
-        encoder = cls.build_encoder(args)
-        decoder = cls.build_decoder(args, task, decoder_embed_tokens)
-        encoder_proj = nn.Linear(args.encoder_embed_dim, args.encoder_embed_dim)
-        decoder_proj = nn.Linear(args.decoder_embed_dim, args.decoder_embed_dim)
-        no_finetuning = getattr(args, "no_finetuning", False)
-        if not no_finetuning:
-            joint = nn.Linear(
-                args.decoder_embed_dim,
-                len(task.target_dictionary)
-            )
-        else:
-            joint=None
-        return cls(args, encoder, encoder_proj, decoder, decoder_proj, joint)
+        speech_encoder = cls.build_speech_encoder(args)
+        text_encoder = cls.build_text_encoder(args, task, text_encoder_embed_tokens)
+        speech_encoder_proj = nn.Linear(args.speech_encoder_embed_dim, args.speech_encoder_embed_dim)
+        text_encoder_proj = nn.Linear(args.text_encoder_embed_dim, args.text_encoder_embed_dim)
+
+        joint = nn.Linear(
+            args.speech_encoder_embed_dim,
+            len(task.target_dictionary)
+        )
+
+        return cls(args, speech_encoder, speech_encoder_proj, text_encoder, text_encoder_proj, joint)
 
     def get_normalized_probs(
         self,
@@ -259,15 +310,13 @@ class ContraTransformerModel(BaseFairseqModel):
         sample: Optional[Dict[str, Tensor]] = None,
     ):
         # net_output['encoder_out'] is a (T, B, D) tensor
-        encoder_output, decoder_output = net_output
-        encoder_output = encoder_output["encoder_out"][0]
-        decoder_output = decoder_output["encoder_out"][0]
-        encoder_output = self.encoder_proj(encoder_output)
-        decoder_output = self.decoder_proj(decoder_output)
+        speech_encoder_output, text_encoder_output = net_output
+        e_speech = self.speech_encoder_proj(speech_encoder_output["encoder_out"][0])
+        e_text = self.text_encoder_proj(text_encoder_output["encoder_out"][0])
 
         logits = self.joint(
-            encoder_output.transpose(1, 0).unsqueeze(2) + 
-            decoder_output.transpose(1, 0).unsqueeze(1)
+            e_speech.transpose(1, 0).unsqueeze(2) + 
+            e_text.transpose(1, 0).unsqueeze(1)
         )
         logits = logits.float()
 
@@ -281,11 +330,11 @@ class ContraTransformerModel(BaseFairseqModel):
         return lprobs
 
     def forward(self, src_tokens, src_lengths, prev_output_tokens, prev_output_tokens_length):
-        encoder_out = self.encoder(src_tokens=src_tokens, src_lengths=src_lengths)
-        decoder_out = self.decoder(src_tokens=prev_output_tokens, src_lengths=prev_output_tokens_length)
-        return encoder_out, decoder_out 
+        speech_encoder_out = self.speech_encoder(src_tokens=src_tokens, src_lengths=src_lengths)
+        text_encoder_out = self.text_encoder(src_tokens=prev_output_tokens, src_lengths=prev_output_tokens_length)
+        return speech_encoder_out, text_encoder_out 
 
-class LTTTransformerEncoder(FairseqEncoder):
+class TextTransformerEncoder(FairseqEncoder):
     def __init__(self, args, dictionary, embeded_tokens):
         super().__init__(None)
 
@@ -295,29 +344,30 @@ class LTTTransformerEncoder(FairseqEncoder):
         self.dropout_module = FairseqDropout(
             p=args.dropout, module_name=self.__class__.__name__
         )
-        self.embed_scale = math.sqrt(args.decoder_embed_dim)
+        self.embed_scale = math.sqrt(args.text_encoder_embed_dim)
         if args.no_scale_embedding:
             self.embed_scale = 1.0
-        self.padding_idx = 1
+        self.dictionary = dictionary
+        self.padding_idx = dictionary.pad()
 
         self.embed_tokens = embeded_tokens
 
         self.embed_positions = (
             PositionalEmbedding(
                 args.max_target_positions,
-                args.decoder_embed_dim,
+                args.text_encoder_embed_dim,
                 self.padding_idx,
-                learned=args.decoder_learned_pos,
+                learned=args.text_encoder_learned_pos,
             )
             if not args.no_token_positional_embeddings
             else None
         )
 
         self.transformer_layers = nn.ModuleList(
-            [TransformerEncoderLayer(args) for _ in range(args.decoder_layers)]
+            [TransformerEncoderLayer(args, "text") for _ in range(args.text_encoder_layers)]
         )
-        if args.encoder_normalize_before:
-            self.layer_norm = LayerNorm(args.decoder_embed_dim)
+        if args.text_encoder_normalize_before:
+            self.layer_norm = LayerNorm(args.text_encoder_embed_dim)
         else:
             self.layer_norm = None
 
@@ -409,7 +459,7 @@ class LTTTransformerEncoder(FairseqEncoder):
         self.num_updates = num_updates
 
 
-class S2TTransformerEncoder(FairseqEncoder):
+class SpeechTransformerEncoder(FairseqEncoder):
     def __init__(self, args):
         super().__init__(None)
 
@@ -419,7 +469,7 @@ class S2TTransformerEncoder(FairseqEncoder):
         self.dropout_module = FairseqDropout(
             p=args.dropout, module_name=self.__class__.__name__
         )
-        self.embed_scale = math.sqrt(args.encoder_embed_dim)
+        self.embed_scale = math.sqrt(args.speech_encoder_embed_dim)
         if args.no_scale_embedding:
             self.embed_scale = 1.0
         self.padding_idx = 1
@@ -427,19 +477,19 @@ class S2TTransformerEncoder(FairseqEncoder):
         self.subsample = Conv1dSubsampler(
             args.input_feat_per_channel * args.input_channels,
             args.conv_channels,
-            args.encoder_embed_dim,
+            args.speech_encoder_embed_dim,
             [int(k) for k in args.conv_kernel_sizes.split(",")],
         )
 
         self.embed_positions = PositionalEmbedding(
-            args.max_source_positions, args.encoder_embed_dim, self.padding_idx
+            args.max_source_positions, args.speech_encoder_embed_dim, self.padding_idx
         )
 
         self.transformer_layers = nn.ModuleList(
-            [TransformerEncoderLayer(args) for _ in range(args.encoder_layers)]
+            [TransformerEncoderLayer(args, "speech") for _ in range(args.speech_encoder_layers)]
         )
-        if args.encoder_normalize_before:
-            self.layer_norm = LayerNorm(args.encoder_embed_dim)
+        if args.speech_encoder_normalize_before:
+            self.layer_norm = LayerNorm(args.speech_encoder_embed_dim)
         else:
             self.layer_norm = None
 
@@ -530,55 +580,81 @@ class S2TTransformerEncoder(FairseqEncoder):
 
 
 
-@register_model_architecture(model_name="contra_transformer", arch_name="contra_transformer")
+@register_model_architecture(model_name="contra_transformer_transducer", arch_name="contra_transformer_transducer")
 def base_architecture(args):
     args.encoder_freezing_updates = getattr(args, "encoder_freezing_updates", 0)
-    # Convolutional subsampler
+    # speech encoder 
     args.conv_kernel_sizes = getattr(args, "conv_kernel_sizes", "5,5")
     args.conv_channels = getattr(args, "conv_channels", 1024)
-    # Transformer
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 512)
-    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 2048)
-    args.encoder_layers = getattr(args, "encoder_layers", 6)
-    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 8)
-    args.encoder_normalize_before = getattr(args, "encoder_normalize_before", True)
-
-    args.decoder_embed_dim = getattr(args, "decoder_embed_dim", args.encoder_embed_dim)
-    args.decoder_ffn_embed_dim = getattr(
-        args, "decoder_ffn_embed_dim", args.encoder_ffn_embed_dim
-    )
-    args.decoder_layers = getattr(args, "decoder_layers", 2)
-    # args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 8)
-    # args.decoder_normalize_before = getattr(args, "decoder_normalize_before", True)
-    args.decoder_learned_pos = getattr(args, "decoder_learned_pos", False)
-
+    # speech encoder
+    args.speech_encoder_embed_dim = getattr(args, "speech_encoder_embed_dim", 512)
+    args.speech_encoder_ffn_embed_dim = getattr(args, "speech_encoder_ffn_embed_dim", 2048)
+    args.speech_encoder_layers = getattr(args, "speech_encoder_layers", 6)
+    args.speech_encoder_attention_heads = getattr(args, "speech_encoder_attention_heads", 8)
+    args.speech_encoder_normalize_before = getattr(args, "speech_encoder_normalize_before", True)
+    # text encoder
+    args.text_encoder_embed_dim = getattr(args, "text_encoder_embed_dim", 512)
+    args.text_encoder_ffn_embed_dim = getattr(args, "text_encoder_ffn_embed_dim", 2048)
+    args.text_encoder_layers = getattr(args, "text_encoder_layers", 2)
+    args.text_encoder_attention_heads = getattr(args, "text_encoder_attention_heads", 8)
+    args.text_encoder_normalize_before = getattr(args, "text_encoder_normalize_before", True)
+    args.text_encoder_learned_pos = getattr(args, "text_encoder_learned_pos", False)
+    # transformer
     args.dropout = getattr(args, "dropout", 0.1)
-    # args.attention_dropout = getattr(args, "attention_dropout", args.dropout)
-    # args.activation_dropout = getattr(args, "activation_dropout", args.dropout)
+    args.attention_dropout = getattr(args, "attention_dropout", args.dropout)
+    args.activation_dropout = getattr(args, "activation_dropout", args.dropout)
     args.activation_fn = getattr(args, "activation_fn", "relu")
     args.adaptive_softmax_cutoff = getattr(args, "adaptive_softmax_cutoff", None)
     args.adaptive_softmax_dropout = getattr(args, "adaptive_softmax_dropout", 0)
-    # args.share_decoder_input_output_embed = getattr(
-    #     args, "share_decoder_input_output_embed", False
-    # )
     args.no_token_positional_embeddings = getattr(
         args, "no_token_positional_embeddings", False
     )
-    # args.adaptive_input = getattr(args, "adaptive_input", False)
-    # args.decoder_layerdrop = getattr(args, "decoder_layerdrop", 0.0)
-    # args.decoder_output_dim = getattr(
-    #     args, "decoder_output_dim", args.decoder_embed_dim
-    # )
-    # args.decoder_input_dim = getattr(args, "decoder_input_dim", args.decoder_embed_dim)
+    args.adaptive_input = getattr(args, "adaptive_input", False)
     args.no_scale_embedding = getattr(args, "no_scale_embedding", False)
-    # args.quant_noise_pq = getattr(args, "quant_noise_pq", 0)
+    args.quant_noise_pq = getattr(args, "quant_noise_pq", 0)
 
 
-@register_model_architecture("contra_transformer", "contra_transformer_s")
+@register_model_architecture("contra_transformer_transducer", "contra_transformer_transducer_s")
 def s2t_transformer_s(args):
-    args.encoder_embed_dim = getattr(args, "encoder_embed_dim", 256)
-    args.encoder_ffn_embed_dim = getattr(args, "encoder_ffn_embed_dim", 256 * 8)
-    args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 4)
-    args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 4)
+    args.speech_encoder_embed_dim = getattr(args, "speech_encoder_embed_dim", 256)
+    args.speech_encoder_ffn_embed_dim = getattr(args, "speech_encoder_ffn_embed_dim", 256 * 8)
+    args.speech_encoder_attention_heads = getattr(args, "speech_encoder_attention_heads", 4)
+    args.text_encoder_embed_dim = getattr(args, "text_encoder_embed_dim", 256)
+    args.text_encoder_ffn_embed_dim = getattr(args, "text_encoder_ffn_embed_dim", 256 * 8)
+    args.text_encoder_attention_heads = getattr(args, "text_encoder_attention_heads", 4)
     args.dropout = getattr(args, "dropout", 0.1)
     base_architecture(args)
+
+
+@register_model_architecture("contra_transformer_transducer", "contra_transformer_transducer_m")
+def s2t_transformer_m(args):
+    args.speech_encoder_layers = getattr(args, "speech_encoder_layers", 12)
+    args.speech_encoder_embed_dim = getattr(args, "speech_encoder_embed_dim", 512)
+    args.speech_encoder_ffn_embed_dim = getattr(args, "speech_encoder_ffn_embed_dim", 512 * 4)
+    args.speech_encoder_attention_heads = getattr(args, "speech_encoder_attention_heads", 8)
+    args.text_encoder_attention_heads = getattr(args, "text_encoder_attention_heads", 8)
+    args.dropout = getattr(args, "dropout", 0.15)
+    base_architecture(args)
+
+
+@register_model_architecture("contra_transformer_transducer", "contra_transformer_transducer_l")
+def s2t_transformer_l(args):
+    args.speech_encoder_layers = getattr(args, "speech_encoder_layers", 18)
+    args.speech_encoder_embed_dim = getattr(args, "speech_encoder_embed_dim", 512)
+    args.speech_encoder_ffn_embed_dim = getattr(args, "speech_encoder_ffn_embed_dim", 512 * 4)
+    args.speech_encoder_attention_heads = getattr(args, "speech_encoder_attention_heads", 8)
+    args.text_encoder_attention_heads = getattr(args, "text_encoder_attention_heads", 8)
+    args.dropout = getattr(args, "dropout", 0.2)
+    base_architecture(args)
+
+
+@register_model_architecture("contra_transformer_transducer", "contra_transformer_transducer_xl")
+def s2t_transformer_xl(args):
+    args.speech_encoder_layers = getattr(args, "speech_encoder_layers", 24)
+    args.speech_encoder_embed_dim = getattr(args, "speech_encoder_embed_dim", 512)
+    args.speech_encoder_ffn_embed_dim = getattr(args, "speech_encoder_ffn_embed_dim", 512 * 4)
+    args.speech_encoder_attention_heads = getattr(args, "speech_encoder_attention_heads", 8)
+    args.text_encoder_attention_heads = getattr(args, "text_encoder_attention_heads", 8)
+    args.dropout = getattr(args, "dropout", 0.2)
+    base_architecture(args)
+
