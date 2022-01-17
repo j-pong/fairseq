@@ -106,7 +106,7 @@ class CtcCriterion(FairseqCriterion):
         self.zero_infinity = cfg.zero_infinity
         self.sentence_avg = cfg.sentence_avg
 
-    def forward(self, model, sample, reduce=True):
+    def forward(self, model, sample, _means = {}, fisher_matrices = {}, ewc_step = False, reduce=True):
         net_output = model(**sample["net_input"])
         lprobs = model.get_normalized_probs(
             net_output, log_probs=True
@@ -154,6 +154,22 @@ class CtcCriterion(FairseqCriterion):
             "nsentences": sample["id"].numel(),
             "sample_size": sample_size,
         }
+
+
+        ewc_loss = 0  
+        hyperparams = 0.01
+        
+        if ewc_step:
+            params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+            for n in _means:                                   
+                _loss = (fisher_matrices[n] * (params[n] - _means[n]) ** 2).to(dtype=torch.float32)
+                _loss_sum = _loss.sum()
+
+                if not torch.isfinite(_loss_sum) or torch.isnan(_loss_sum):
+                    _loss_sum = 0
+                ewc_loss += _loss_sum
+        loss = loss + ewc_loss * hyperparams  
+
 
         if not model.training:
             import editdistance
