@@ -42,7 +42,7 @@ class Wav2vecCriterion(FairseqCriterion):
         self.loss_weights = loss_weights
         self.log_keys = [] if log_keys is None else log_keys
 
-    def forward(self, model, sample, reduce=True):
+    def forward(self, model, sample, _means = {}, fisher_matrices = {}, ewc_step = False, reduce=True):
         """Compute the loss for the given sample.
 
         Returns a tuple with three elements:
@@ -107,6 +107,20 @@ class Wav2vecCriterion(FairseqCriterion):
                     loss += p
                     losses.append(p)
 
+        ## calculate ewc loss ##
+        ewc_loss = 0 
+        hyperparams = 0.01
+
+        if ewc_steps:
+            params = {n: p for n, p in model.named_parameters() if p.requires_grad}
+            for n in _means:                                   
+                _loss = (fisher_matrices[n] * (params[n] - _means[n]) ** 2).to(dtype=torch.float32)
+                _loss_sum = _loss.sum()
+
+                if not torch.isfinite(_loss_sum) or torch.isnan(_loss_sum):
+                    _loss_sum = 0
+                ewc_loss += _loss_sum
+
         logging_output = {
             "loss": loss.item() if (reduce and not self.xla) else loss.detach(),
             "ntokens": sample_size,
@@ -160,6 +174,8 @@ class Wav2vecCriterion(FairseqCriterion):
 
                 logging_output["correct"] = corr
                 logging_output["count"] = count
+
+        loss = loss + ewc_loss * hyperparams
 
         return loss, sample_size, logging_output
 
