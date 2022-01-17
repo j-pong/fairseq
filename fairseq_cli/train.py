@@ -175,6 +175,20 @@ def main(cfg: FairseqConfig) -> None:
 
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+
+    ## save old params
+    from copy import deepcopy
+    from torch.autograd import Variable
+    from torch import nn
+    _means = {}
+    params = {n: p for n, p in trainer.model.named_parameters() if p.requires_grad}
+    for n, p in deepcopy(params).items():
+        # if p.requires_grad:
+        #     logging.info(n)
+        _means[n] = Variable(p.data.cuda())
+
+    trainer.old_params = _means    
+
     while epoch_itr.next_epoch_idx <= max_epoch:
         if lr <= cfg.optimization.stop_min_lr:
             logger.info(
@@ -300,7 +314,9 @@ def train(
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):
-            log_output = trainer.train_step(samples)
+            fisher_matrices = trainer._diag_fisher(samples)  ## change
+            log_output = trainer.ewc_train_step(samples, fisher_matrices)
+            # log_output = trainer.train_step(samples)
 
         if log_output is not None:  # not OOM, overflow, ...
             # log mid-epoch stats
