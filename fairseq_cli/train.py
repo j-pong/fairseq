@@ -314,7 +314,7 @@ def train(
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):
-            fisher_matrices = trainer._diag_fisher(samples)  ## change
+            fisher_matrices = trainer._diag_fisher(samples)
             log_output = trainer.ewc_train_step(samples, fisher_matrices)
             # log_output = trainer.train_step(samples)
 
