@@ -1033,10 +1033,9 @@ class Trainer(object):
         
         params = {n: p for n, p in self.model.named_parameters() if p.requires_grad}
 
+        # fisher matrix initialize
         for n, p in deepcopy(params).items():
             p.data.zero_()
-            # if p.requires_grad:
-            #     logging.info(n)
             fisher_matrices[n] = Variable(p.data.cuda()) 
 
         self.model.eval()
@@ -1059,13 +1058,23 @@ class Trainer(object):
 
             with maybe_no_sync():
                 # ewc calculate fisher matrix step
-                fisher_matrices = self.task.ewc_fisher_matrix_step(
-                        sample=sample,
-                        model=self.model,
-                        criterion=self.criterion,
-                        optimizer=self.optimizer,
-                        fisher_matrices=fisher_matrices,
-                        samples_len=len(samples),)
+                if self.cfg.common.ewc_train_finetuning:
+                    fisher_matrices = self.task.ewc_fisher_fine_step(
+                            sample=sample,
+                            model=self.model,
+                            criterion=self.criterion,
+                            optimizer=self.optimizer,
+                            fisher_matrices=fisher_matrices,
+                            samples_len=len(samples),)
+                else:
+                    fisher_matrices = self.task.ewc_fisher_pre_step(
+                            sample=sample,
+                            model=self.model,
+                            criterion=self.criterion,
+                            optimizer=self.optimizer,
+                            fisher_matrices=fisher_matrices,
+                            samples_len=len(samples),)
+)
         return fisher_matrices
   
 
@@ -1076,10 +1085,6 @@ class Trainer(object):
         self.criterion.train()
         self.zero_grad()
 
-        # for n in fisher_matrices:
-        #     logging.info(self.old_params[n])
-        #     logging.info(fisher_matrices[n])
-        #     break
 
         metrics.log_start_time("train_wall", priority=800, round=0)
 
@@ -1114,6 +1119,7 @@ class Trainer(object):
                         ignore_grad=is_dummy_batch,
                         _means=self.old_params,
                         fisher_matrices=fisher_matrices,
+                        ewc_hyperparam=ewc_hyperparam,
                     )
                     del loss
                     # logging.info(ewc_loss)
