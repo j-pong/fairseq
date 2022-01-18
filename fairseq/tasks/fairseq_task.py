@@ -482,7 +482,7 @@ class FairseqTask(object):
             **extra_gen_cls_kwargs,
         )
 
-    def ewc_fisher_matrix_step(
+    def ewc_fisher_fine_step(
         self, sample, model, criterion, optimizer, fisher_matrices = {}, samples_len = 0
     ):                
         model.eval()
@@ -491,20 +491,35 @@ class FairseqTask(object):
         loss, sample_size, logging_output= criterion(model, sample)
 
         loss.backward()
-        # for n, p in model.named_parameters():
-        #     if p.requires_grad:
-        #         logging.info(n)
 
         for n, p in model.named_parameters():              
             if p.grad is not None and n != "module.module.w2v_encoder.proj.bias" and n != "module.module.w2v_encoder.proj.weight":
-                # logging.info(n) 
                 p_grad = (p.grad.data.to(dtype=torch.float32) ** 2)  
                 _p_grad = p_grad / samples_len
                 _p_grad_sum = _p_grad.sum()
                 if torch.isfinite(_p_grad_sum) and not torch.isnan(_p_grad_sum):
                     fisher_matrices[n].data += _p_grad
-        
         return fisher_matrices
+
+    def ewc_fisher_pre_step(
+        self, sample, model, criterion, optimizer, fisher_matrices = {}, samples_len = 0
+    ):                
+        model.eval()
+        model.zero_grad()
+      
+        loss, sample_size, logging_output= criterion(model, sample)
+
+        loss.backward()
+
+        for n, p in model.named_parameters():              
+            if p.grad is not None:
+                p_grad = (p.grad.data.to(dtype=torch.float32) ** 2)  
+                _p_grad = p_grad / samples_len
+                _p_grad_sum = _p_grad.sum()
+                if torch.isfinite(_p_grad_sum) and not torch.isnan(_p_grad_sum):
+                    fisher_matrices[n].data += _p_grad
+        return fisher_matrices    
+
     def ewc_train_step(
         self, sample, model, criterion, optimizer, update_num, _means, fisher_matrices , ignore_grad=False
     ):
@@ -513,9 +528,7 @@ class FairseqTask(object):
         model.set_num_updates(update_num)
         with torch.autograd.profiler.record_function("forward"):
             with torch.cuda.amp.autocast(enabled=(isinstance(optimizer, AMPOptimizer))):
-                loss, sample_size, logging_output = criterion(model, sample, _means, fisher_matrices,  ewc_step=True)
-            
-
+                loss, sample_size, logging_output = criterion(model, sample, _means, fisher_matrices, ewc_step=True, ewc_hyperparam=ewc_hyperparam)
         if ignore_grad:
             loss *= 0
         with torch.autograd.profiler.record_function("backward"):
