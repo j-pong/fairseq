@@ -239,6 +239,30 @@ class CommonConfig(FairseqDataclass):
             "help": "path to run plasma_store, defaults to /tmp/plasma. Paths outside /tmp tend to fail."
         },
     )
+    ewc_fisher_epoch: bool = field(
+        default=False,
+        metadata={
+            "help": "when ewc training with fisher calculating epoch"
+        },
+    )
+    ewc_train: bool = field(
+        default=False,
+        metadata={
+            "help": "whether ewc training"
+        },
+    )
+    ewc_train_hyperparameter: float = field(
+        default=0.01,
+        metadata={
+            "help": "scale scalar value of ewc loss"
+        },
+    )
+    ewc_train_finetuning: bool = field(
+        default=False,
+        metadata={
+            "help": "whether finetuning or pretraining"
+        },
+    )
 
 
 @dataclass
