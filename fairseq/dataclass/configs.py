@@ -239,6 +239,61 @@ class CommonConfig(FairseqDataclass):
             "help": "path to run plasma_store, defaults to /tmp/plasma. Paths outside /tmp tend to fail."
         },
     )
+    ############### custom settings ################
+    # l2 related
+    l2_beta: float = field(
+        default=0.001,
+        metadata={"help": "IMM L2 transfer parameter"},
+    )
+    l2: bool = field(
+        default=False,
+        metadata={"help": "L2 transfer"},
+    )
+    # mode imm related
+    save_weight: bool = field(
+        default=False,
+        metadata={"help": "save model weight as dict"},
+    )
+    save_weight_path: str = field(
+        default="outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt",
+        metadata={"help": "path to save model weight as dict"},
+    )
+    save_grad: bool = field(
+        default=False,
+        metadata={"help": "save gradient for mode IMM"},
+    )
+    save_grad_path: str = field(
+        default="outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt",
+        metadata={"help": "path to save gradient as dict"},
+    )
+    mode_imm: bool = field(
+        default=False,
+        metadata={"help": "model update using mode IMM"},
+    )
+    mode_imm_task_num: int = field(
+        default=2,
+        metadata={"help": "num of tasks for mode IMM"},
+    )
+    mode_imm_weight_path: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "weight path for mode IMM"},
+    )
+    mode_imm_grad_path: List[str] = field(
+        default_factory=lambda: [],
+        metadata={"help": "grad path for mode IMM"},
+    )
+    mode_imm_save_model_path: str = field(
+        default="new_model_path.pt",
+        metadata={"help": "grad path for mode IMM"},
+    )
+    imm_fine: bool = field(
+        default=False,
+        metadata={"help": "finetune updated model using mode IMM"},
+    )
+    imm_fine_model_path: str = field(
+        default="model_path.pt",
+        metadata={"help": "finetune updated model using mode IMM"},
+    )
 
 
 @dataclass

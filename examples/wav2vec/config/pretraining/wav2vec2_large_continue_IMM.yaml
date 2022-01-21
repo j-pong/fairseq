@@ -4,6 +4,23 @@ common:
   fp16: true
   log_format: json
   log_interval: 200
+  ################################################
+  l2: False #
+  l2_beta: 0.001 #
+  save_weight: False
+  save_weight_path: /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt
+  # save_weight_path: /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt
+  save_grad: False
+  save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt
+  # save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt
+  mode_imm: False
+  mode_imm_task_num: 2
+  mode_imm_weight_path:  ['/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt',' /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt']
+  mode_imm_grad_path: ['/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt','/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt']
+  mode_imm_save_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt'
+  imm_fine: False
+  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt'
+  ##################################################
 
 checkpoint:
   # save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.01/checkpoints
@@ -38,8 +55,6 @@ criterion:
   infonce: true
   log_keys: ["prob_perplexity","code_perplexity","temp"]
   loss_weights: [0.1, 0]
-  beta: 0.001 #
-  L2: False #
 
 optimization:
   # max_epoch: 1074  #

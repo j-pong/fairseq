@@ -177,47 +177,32 @@ def main(cfg: FairseqConfig) -> None:
 
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+    trainer.optimizer.l2 = cfg.common.l2
+    trainer.save_grad = cfg.common.save_grad
 
 
 
+    if cfg.common.l2:
+        trainer.l2_beta = cfg.common.l2_beta
+        trainer.criterion.old_params = {name: p.data.clone().detach().to('cpu') for name, p in trainer.model.named_parameters() if p.requires_grad}
 
-    # if trainer.criterion.L2:
-    #     trainer.criterion.old_params = {name: p.data.clone().detach().to('cpu') for name, p in trainer.model.named_parameters() if p.requires_grad}
-
-    trainer.save_weight = False
-    if trainer.save_weight:
+    if cfg.common.save_weight:
         temp = {x[0]: x[1].data.to('cpu') for x in trainer.model.named_parameters() if x[1].requires_grad}
-        # torch.save(temp, '/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt')
-        # torch.save(temp, '/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt')
         if trainer.should_save_checkpoint_on_current_rank:
             print('save')
             checkpoint_utils.torch_persistent_save(
                 temp,
-                # '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt',
-                '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt',
+                cfg.common.save_weight_path,
                 async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
             )
             exit()
 
-    trainer.epoch = 0
-    trainer.max_epoch = max_epoch
-    trainer.save_grad = False
-    trainer.mode_imm = False
-    trainer.alphas = [0.5, 0.5]
-    trainer.imm_fine = True
 
-    if trainer.mode_imm: ##
-        FM = [
-            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt'),
-            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt')
-        ]
-        # print(FM[0])
-        # exit()
+    if cfg.common.mode_imm: ##
+        trainer.alphas = [ 1 / (i+1) for i in range(cfg.common.mode_imm_task_num)]
+        FM = [ torch.load(path) for path in cfg.common.mode_imm_grad_path ]
 
-        L_copy = [
-            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt'),
-            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt')
-        ]
+        L_copy = [ torch.load(path for path in cfg.mode_imm_weight_path) ]
 
         Lw = imm_utils.UpdateMultiTaskWeightWithAlphas(FM, trainer.alphas)
         imm_utils.AddMultiTaskLayers(L_copy, trainer.model, Lw, trainer.alphas)
@@ -229,13 +214,13 @@ def main(cfg: FairseqConfig) -> None:
             print('save')
             checkpoint_utils.torch_persistent_save(
                 temp,
-                '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt',
+                cfg.common.mode_imm_save_model_path,
                 async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
             )
             exit()
 
-    if trainer.imm_fine:
-        temp = torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt')
+    if cfg.common.imm_fine:
+        temp = torch.load(cfg.common.imm_fine_model_path)
         with torch.no_grad():
             for i in list(temp.keys()):
                 for key, p in trainer.model.named_parameters():
@@ -257,7 +242,9 @@ def main(cfg: FairseqConfig) -> None:
             )
             break
         
-        if trainer.save_grad: ##
+        if cfg.common.save_grad: ##
+            trainer.save_grad = cfg.common.save_grad
+            trainer.epoch = epoch_itr.epoch ##
             # trainer.model.grad_dict = {x[0]: torch.zeros_like(x[1].data.to('cpu')) for x in trainer.model.named_parameters() if x[1].requires_grad}
             trainer.model.grad_dict = {x[0]: 0 for x in trainer.model.named_parameters() if x[1].requires_grad}
         # train for one epoch
@@ -271,7 +258,7 @@ def main(cfg: FairseqConfig) -> None:
         if should_stop:
             break
 
-        if trainer.save_grad and trainer.epoch == max_epoch: ##
+        if cfg.common.save_grad and trainer.epoch: ##
             # from filelock import FileLock
             # with FileLock('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt'):
             #     print(trainer.model.grad_dict)
@@ -280,8 +267,7 @@ def main(cfg: FairseqConfig) -> None:
                 print('save')
                 checkpoint_utils.torch_persistent_save(
                     trainer.model.grad_dict,
-                    '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt',
-                    # '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt',
+                    cfg.common.save_grad_path,
                     async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
                 )
 

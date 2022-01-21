@@ -4,8 +4,11 @@ common:
   fp16: true
   log_format: json
   log_interval: 200
+  imm_fine: False
+  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt'
 
 checkpoint:
+  save_dir: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM_fine_freeze1200_lr0.00002/checkpoints'
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
 

@@ -32,24 +32,16 @@ class Wav2VecCriterionConfig(FairseqDataclass):
         default_factory=lambda: [],
         metadata={"help": "output keys to log"},
     )
-    beta: float = field(
-        default=0.0001,
-        metadata={"help": "IMM L2 transfer parameter"},
-    )
-    L2: bool = field(
-        default=False,
-        metadata={"help": "IMM L2 transfer parameter"},
-    )
 
 @register_criterion("wav2vec", dataclass=Wav2VecCriterionConfig)
 class Wav2vecCriterion(FairseqCriterion):
-    def __init__(self, task, infonce=False, loss_weights=None, log_keys=None, beta=0.0001, L2=False):
+    def __init__(self, task, infonce=False, loss_weights=None, log_keys=None, beta=0.0001, l2=False):
         super().__init__(task)
         self.infonce = infonce
         self.loss_weights = loss_weights
         self.log_keys = [] if log_keys is None else log_keys
         self.beta = beta
-        self.L2 = L2
+        self.l2 = l2
 
     def forward(self, model, sample, reduce=True):
         """Compute the loss for the given sample.
@@ -94,7 +86,7 @@ class Wav2vecCriterion(FairseqCriterion):
         
 
         
-        if self.L2: #
+        if self.l2: #
             temp = loss.clone().detach()
             l2_temp = 0
             for name, p in model.named_parameters():
