@@ -877,6 +877,19 @@ class Trainer(object):
                         raise FloatingPointError("gradients are Nan/Inf")
 
             with torch.autograd.profiler.record_function("optimizer"):
+
+                if self.save_grad and self.epoch == self.max_epoch: #
+                    for n, p in self.model.named_parameters():
+                        if not torch.isfinite(torch.square(p.grad.data.to(torch.float32)).to('cpu')).all():
+                            print('Overflow')
+                            exit()
+                    print('yes')
+                    # self.model.grad_dict = {x[0]: self.model.grad_dict[x[0]] + (torch.square(x[1].grad.data * 100) / 10000).to('cpu') for x in self.model.named_parameters() if x[1].requires_grad}
+                    self.model.grad_dict = {x[0]: self.model.grad_dict[x[0]] + torch.square(x[1].grad.data.to(torch.float32)).to('cpu') for x in self.model.named_parameters() if x[1].requires_grad}
+                    # print(self.model.grad_dict[list(self.model.grad_dict.keys())[0]])
+                if self.save_grad and self.epoch == self.max_epoch: #
+                    self.zero_grad()
+                    
                 # take an optimization step
                 self.task.optimizer_step(
                     self.optimizer, model=self.model, update_num=self.get_num_updates()

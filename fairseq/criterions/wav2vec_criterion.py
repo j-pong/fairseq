@@ -32,15 +32,24 @@ class Wav2VecCriterionConfig(FairseqDataclass):
         default_factory=lambda: [],
         metadata={"help": "output keys to log"},
     )
-
+    beta: float = field(
+        default=0.0001,
+        metadata={"help": "IMM L2 transfer parameter"},
+    )
+    L2: bool = field(
+        default=False,
+        metadata={"help": "IMM L2 transfer parameter"},
+    )
 
 @register_criterion("wav2vec", dataclass=Wav2VecCriterionConfig)
 class Wav2vecCriterion(FairseqCriterion):
-    def __init__(self, task, infonce=False, loss_weights=None, log_keys=None):
+    def __init__(self, task, infonce=False, loss_weights=None, log_keys=None, beta=0.0001, L2=False):
         super().__init__(task)
         self.infonce = infonce
         self.loss_weights = loss_weights
         self.log_keys = [] if log_keys is None else log_keys
+        self.beta = beta
+        self.L2 = L2
 
     def forward(self, model, sample, reduce=True):
         """Compute the loss for the given sample.
@@ -82,6 +91,21 @@ class Wav2vecCriterion(FairseqCriterion):
                 .reshape(logits.size(0))
             )
             loss = (loss * mi).sum() if reduce else (loss * mi)
+        
+
+        
+        if self.L2: #
+            temp = loss.clone().detach()
+            l2_temp = 0
+            for name, p in model.named_parameters():
+                if p.requires_grad:
+                    l2 = p - self.old_params[name].cuda()
+                    l2_temp += self.beta * torch.sum(torch.square(l2.to(torch.float32))).to(torch.float16)
+                # print(torch.sum(torch.square(p.clone() - old_params[name])))
+                loss += l2_temp
+            print("before",temp)
+            print("after",loss)
+
 
         if "sample_size" in sample:
             sample_size = sample["sample_size"]

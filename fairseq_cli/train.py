@@ -39,6 +39,8 @@ from fairseq.logging import meters, metrics, progress_bar
 from fairseq.model_parallel.megatron_trainer import MegatronTrainer
 from fairseq.trainer import Trainer
 
+from . import imm_utils
+
 
 def main(cfg: FairseqConfig) -> None:
     if isinstance(cfg, argparse.Namespace):
@@ -175,6 +177,77 @@ def main(cfg: FairseqConfig) -> None:
 
     train_meter = meters.StopwatchMeter()
     train_meter.start()
+
+
+
+
+    # if trainer.criterion.L2:
+    #     trainer.criterion.old_params = {name: p.data.clone().detach().to('cpu') for name, p in trainer.model.named_parameters() if p.requires_grad}
+
+    trainer.save_weight = False
+    if trainer.save_weight:
+        temp = {x[0]: x[1].data.to('cpu') for x in trainer.model.named_parameters() if x[1].requires_grad}
+        # torch.save(temp, '/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt')
+        # torch.save(temp, '/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt')
+        if trainer.should_save_checkpoint_on_current_rank:
+            print('save')
+            checkpoint_utils.torch_persistent_save(
+                temp,
+                # '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt',
+                '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt',
+                async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
+            )
+            exit()
+
+    trainer.epoch = 0
+    trainer.max_epoch = max_epoch
+    trainer.save_grad = False
+    trainer.mode_imm = False
+    trainer.alphas = [0.5, 0.5]
+    trainer.imm_fine = True
+
+    if trainer.mode_imm: ##
+        FM = [
+            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt'),
+            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt')
+        ]
+        # print(FM[0])
+        # exit()
+
+        L_copy = [
+            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt'),
+            torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt')
+        ]
+
+        Lw = imm_utils.UpdateMultiTaskWeightWithAlphas(FM, trainer.alphas)
+        imm_utils.AddMultiTaskLayers(L_copy, trainer.model, Lw, trainer.alphas)
+
+
+        temp = {x[0]: x[1].data.to('cpu') for x in trainer.model.named_parameters() if x[1].requires_grad}
+
+        if trainer.should_save_checkpoint_on_current_rank:
+            print('save')
+            checkpoint_utils.torch_persistent_save(
+                temp,
+                '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt',
+                async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
+            )
+            exit()
+
+    if trainer.imm_fine:
+        temp = torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt')
+        with torch.no_grad():
+            for i in list(temp.keys()):
+                for key, p in trainer.model.named_parameters():
+                    if i.split('.')[2:] == key.split('.')[4:]:
+                        print('copy')
+                        p.copy_(temp[i])
+                        break
+    
+    # trainer.save_grad2 = True
+
+
+
     while epoch_itr.next_epoch_idx <= max_epoch:
         if lr <= cfg.optimization.stop_min_lr:
             logger.info(
@@ -183,11 +256,35 @@ def main(cfg: FairseqConfig) -> None:
                 f"(--stop-min-lr={cfg.optimization.stop_min_lr})"
             )
             break
+        
+        if trainer.save_grad: ##
+            # trainer.model.grad_dict = {x[0]: torch.zeros_like(x[1].data.to('cpu')) for x in trainer.model.named_parameters() if x[1].requires_grad}
+            trainer.model.grad_dict = {x[0]: 0 for x in trainer.model.named_parameters() if x[1].requires_grad}
+        # train for one epoch
+        # a = torch.load('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt')
+        # print(a)
+        # exit()
+        trainer.epoch = epoch_itr.epoch ##
 
         # train for one epoch
         valid_losses, should_stop = train(cfg, trainer, task, epoch_itr)
         if should_stop:
             break
+
+        if trainer.save_grad and trainer.epoch == max_epoch: ##
+            # from filelock import FileLock
+            # with FileLock('/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt'):
+            #     print(trainer.model.grad_dict)
+            #     torch.save(trainer.model.grad_dict,'/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt')
+            if trainer.should_save_checkpoint_on_current_rank:
+                print('save')
+                checkpoint_utils.torch_persistent_save(
+                    trainer.model.grad_dict,
+                    '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt',
+                    # '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt',
+                    async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
+                )
+
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
