@@ -236,6 +236,39 @@ class Wav2Vec2Config(FairseqDataclass):
         metadata={"help": "recompute activations and save memory for extra compute"},
     )
 
+@register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
+class Wav2Vec2MetaModel(BaseFairseqModel):
+    def __init__(self, cfg: Wav2Vec2Config):
+        super().__init__()
+        self.cfg = cfg
+        self.offline_model = Wav2Vec2Model(cfg).eval()
+        self.online_model = Wav2Vec2Model(cfg)
+        assert not self.offline_model.training 
+    
+    @classmethod
+    def build_model(cls, cfg: Wav2Vec2Config, task=None):
+        """Build a new model instance."""
+
+        return cls(cfg)
+
+    def get_logits(self, net_output):
+        return self.online_model.get_logits(net_output)
+    
+    def get_targets(self, sample, net_output):
+        return self.online_model.get_targets(sample, net_output)
+
+    def get_extra_losses(self, net_output):
+        return self.online_model.get_extra_losses(net_output)
+
+    def forward(self, **kwargs):
+        print(kwargs["net_input"].size())
+        print(self.offline_model.training)
+        exit()
+        assert not self.offline_model.training 
+        results = self.offline_model(**kwargs)
+        results = self.online_model(**kwargs)
+
+        return results
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
