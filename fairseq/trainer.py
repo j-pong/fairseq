@@ -1074,7 +1074,7 @@ class Trainer(object):
                             optimizer=self.optimizer,
                             fisher_matrices=fisher_matrices,
                             samples_len=len(samples),)
-)
+
         return fisher_matrices
   
 
