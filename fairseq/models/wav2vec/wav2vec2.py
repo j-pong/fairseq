@@ -5,6 +5,7 @@
 
 import math
 from dataclasses import dataclass, field
+from omegaconf import MISSING, II, open_dict
 from typing import List, Tuple
 
 import numpy as np
@@ -235,14 +236,27 @@ class Wav2Vec2Config(FairseqDataclass):
         default=False,
         metadata={"help": "recompute activations and save memory for extra compute"},
     )
+    w2v_path: str = field(
+        default=MISSING, metadata={"help": "path to wav2vec 2.0 model"}
+    )
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
 class Wav2Vec2MetaModel(BaseFairseqModel):
     def __init__(self, cfg: Wav2Vec2Config):
         super().__init__()
         self.cfg = cfg
+
+        from fairseq import checkpoint_utils
+        state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, {})
+
         self.offline_model = Wav2Vec2Model(cfg).eval()
+        for param in self.offline_model.parameters():
+            param.requires_grad = False
         self.online_model = Wav2Vec2Model(cfg)
+
+        self.offline_model.load_state_dict(state["model"], strict=True)
+        self.online_model.load_state_dict(state["model"], strict=True)
+
         assert not self.offline_model.training 
     
     @classmethod
@@ -258,17 +272,27 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         return self.online_model.get_targets(sample, net_output)
 
     def get_extra_losses(self, net_output):
-        return self.online_model.get_extra_losses(net_output)
+        loss_extra = self.online_model.get_extra_losses(net_output)
+
+        inputs = net_output["codebook_prob"] # C, B, T
+        targets = net_output["codebook_prob_target"].detach()
+        loss = F.kl_div(inputs, targets)
+
+        loss_extra.append(loss)
+
+        return loss_extra
 
     def forward(self, **kwargs):
-        print(kwargs["net_input"].size())
-        print(self.offline_model.training)
-        exit()
-        assert not self.offline_model.training 
-        results = self.offline_model(**kwargs)
-        results = self.online_model(**kwargs)
+        self.offline_model.training = False
+        with torch.no_grad():
+            net_output = self.offline_model(**kwargs)
+        codebook_prob_target = net_output["codebook_prob"]
+        mask_indices = net_output["mask_indices"]
 
-        return results
+        net_output = self.online_model(**kwargs, mask_indices=mask_indices)
+        net_output["codebook_prob_target"] = codebook_prob_target 
+
+        return net_output
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
@@ -719,6 +743,8 @@ class Wav2Vec2Model(BaseFairseqModel):
             "x": x,
             "padding_mask": padding_mask,
             "features_pen": features_pen,
+            "mask_indices": mask_indices,
+            "codebook_prob": q["prob"],
         }
 
         if prob_ppl is not None:

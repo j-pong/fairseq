@@ -139,7 +139,7 @@ class GumbelVectorQuantizer(nn.Module):
         res = self.forward(x, produce_targets=True)
         return res["x"], res["targets"]
 
-    def forward(self, x, produce_targets=False):
+    def forward(self, x, produce_targets=False, produce_probs=True):
 
         result = {"num_vars": self.num_vars * self.groups}
 
@@ -188,6 +188,11 @@ class GumbelVectorQuantizer(nn.Module):
                 .argmax(dim=-1)
                 .view(bsz, tsz, self.groups)
                 .detach()
+            )
+        if produce_probs:
+            result["prob"] = (
+                x.view(bsz * tsz * self.groups, -1)
+                .softmax(dim=-1)
             )
 
         x = x.unsqueeze(-1) * vars
