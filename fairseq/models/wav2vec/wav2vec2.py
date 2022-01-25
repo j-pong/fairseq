@@ -2,7 +2,7 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
+import logging
 import math
 from dataclasses import dataclass, field
 from omegaconf import MISSING, II, open_dict
@@ -237,7 +237,7 @@ class Wav2Vec2Config(FairseqDataclass):
         metadata={"help": "recompute activations and save memory for extra compute"},
     )
     w2v_path: str = field(
-        default=MISSING, metadata={"help": "path to wav2vec 2.0 model"}
+        default="", metadata={"help": "path to wav2vec 2.0 model"}
     )
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
@@ -246,16 +246,20 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         super().__init__()
         self.cfg = cfg
 
-        from fairseq import checkpoint_utils
-        state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, {})
-
         self.offline_model = Wav2Vec2Model(cfg).eval()
         for param in self.offline_model.parameters():
             param.requires_grad = False
         self.online_model = Wav2Vec2Model(cfg)
 
-        self.offline_model.load_state_dict(state["model"], strict=True)
-        self.online_model.load_state_dict(state["model"], strict=True)
+        if len(cfg.w2v_path) > 0:
+            from fairseq import checkpoint_utils
+            state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, {})
+            self.offline_model.load_state_dict(state["model"], strict=True)
+            self.online_model.load_state_dict(state["model"], strict=True)
+
+            logging.info(f"Load pre-trained model from {cfg.w2v_path}")
+        else:
+            logging.info("No pre-trained model")
 
         assert not self.offline_model.training 
     
