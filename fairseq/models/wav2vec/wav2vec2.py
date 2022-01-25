@@ -278,10 +278,10 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
     def get_extra_losses(self, net_output):
         loss_extra = self.online_model.get_extra_losses(net_output)
 
-        inputs = net_output["codebook_prob"] # C, B, T
+        inputs = net_output["codebook_prob"] # B*T, C
         targets = net_output["codebook_prob_target"].detach()
 
-        loss = F.kl_div(inputs.float().log(), targets.float()).type_as(inputs)
+        loss = -(targets.float() * inputs.float().log()).sum(-1).mean().type_as(inputs)
 
         loss_extra.append(loss)
 
