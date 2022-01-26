@@ -4,22 +4,11 @@ common:
   fp16: true
   log_format: json
   log_interval: 200
-  # ewc_train: true
-  # ewc_fisher_epoch: false
-  # ewc_train_finetuning: false
-  # ewc_train_hyperparameter: 0.01
-  # ewc_fisher_epoch_step: 1
-  
 
 checkpoint:
-  # save_dir: /home/jpong/Workspace/HYnet2-fairseq/egs/librispeech/ssl1/outputs/libri960_WSJ_ewc2_0.01/checkpoints
-  reset_lr_scheduler: true
-  reset_optimizer: true
-  # save_interval_updates: 25000
-  # keep_interval_updates: 1
-  # no_epoch_checkpoints: true
-  save_interval: 20
-  keep_interval_updates: 25
+  save_interval_updates: 25000
+  keep_interval_updates: 1
+  no_epoch_checkpoints: true
 
 task:
   _name: audio_pretraining
@@ -29,6 +18,7 @@ task:
   normalize: true
 
 dataset:
+  batch_size: 4
   num_workers: 6
   max_tokens: 1200000
   skip_invalid_size_inputs_valid_test: true
@@ -45,7 +35,6 @@ criterion:
 
 optimization:
   max_update: 1000000
-  # lr: [0.005]
   lr: [0.0001]
 
 optimizer:
