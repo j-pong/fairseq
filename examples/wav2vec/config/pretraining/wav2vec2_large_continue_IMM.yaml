@@ -5,29 +5,30 @@ common:
   log_format: json
   log_interval: 200
   ################################################
-  l2: False #
-  l2_beta: 0.001 #
+  l2: False
+  l2_beta: 0.001
   save_weight: False
   save_weight_path: /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt
   # save_weight_path: /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt
   save_grad: False
-  save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt
-  # save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt
+  # save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_libri.pt
+  # save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt
+  save_grad_path: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj_by_960big.pt
   mode_imm: False
   mode_imm_task_num: 2
-  mode_imm_weight_path:  ['/home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt',' /home/work/Workspace/HYnet2-fairseq/egs/librispeech/kt_LDM/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt']
-  mode_imm_grad_path: ['/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt','/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt']
-  mode_imm_save_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt'
+  mode_imm_weight_path:  ['//home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/weight_libri.pt','/home/jpong/HYlab/examples/asr/librispeech//outputs/libri960big_WSJ_L2_0.001_IMM/weight_wsj.pt']
+  mode_imm_grad_path: ['/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj_by_960big.pt','/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/grad_wsj.pt']
+  mode_imm_save_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM_wsj_wsj.pt'
   imm_fine: False
-  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM.pt'
+  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM/model_IMM_wsj_wsj.pt'
   ##################################################
 
 checkpoint:
   # save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.01/checkpoints
-  save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big/checkpoints
-  restore_file: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big/checkpoints/checkpoint_best.pt
-  # save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001/checkpoints
-  # restore_file: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001/checkpoints/checkpoint_best.pt
+  # save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big/checkpoints
+  # restore_file: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big/checkpoints/checkpoint_best.pt
+  save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001/checkpoints
+  restore_file: /home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001/checkpoints/checkpoint_best.pt
   # reset_lr_scheduler: true
   # reset_optimizer: true
   save_interval_updates: 25000

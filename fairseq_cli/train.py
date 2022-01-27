@@ -199,10 +199,10 @@ def main(cfg: FairseqConfig) -> None:
 
 
     if cfg.common.mode_imm: ##
-        trainer.alphas = [ 1 / (i+1) for i in range(cfg.common.mode_imm_task_num)]
+        trainer.alphas = [ 1 / cfg.common.mode_imm_task_num for i in range(cfg.common.mode_imm_task_num)]
         FM = [ torch.load(path) for path in cfg.common.mode_imm_grad_path ]
 
-        L_copy = [ torch.load(path for path in cfg.mode_imm_weight_path) ]
+        L_copy = [ torch.load(path) for path in cfg.common.mode_imm_weight_path ]
 
         Lw = imm_utils.UpdateMultiTaskWeightWithAlphas(FM, trainer.alphas)
         imm_utils.AddMultiTaskLayers(L_copy, trainer.model, Lw, trainer.alphas)
@@ -255,8 +255,6 @@ def main(cfg: FairseqConfig) -> None:
 
         # train for one epoch
         valid_losses, should_stop = train(cfg, trainer, task, epoch_itr)
-        if should_stop:
-            break
 
         if cfg.common.save_grad and trainer.epoch: ##
             # from filelock import FileLock
@@ -270,7 +268,9 @@ def main(cfg: FairseqConfig) -> None:
                     cfg.common.save_grad_path,
                     async_write=trainer.cfg.checkpoint.write_checkpoints_asynchronously,
                 )
-
+                exit()
+        if should_stop:
+            break
 
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
