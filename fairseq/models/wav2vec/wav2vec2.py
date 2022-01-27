@@ -299,6 +299,10 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
 
         return net_output
 
+    def remove_pretraining_modules(self):
+        self.offline_model = None
+        self.online_model.remove_pretraining_modules()
+
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
     def __init__(self, cfg: Wav2Vec2Config):

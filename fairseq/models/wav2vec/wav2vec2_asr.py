@@ -372,6 +372,7 @@ class Wav2VecEncoder(FairseqEncoder):
             self.load_model_weights(state, model, cfg)
 
         model.remove_pretraining_modules()
+        model = model.online_model
 
         super().__init__(task.source_dictionary)
 
