@@ -302,6 +302,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
     def remove_pretraining_modules(self):
         self.offline_model = None
         self.online_model.remove_pretraining_modules()
+        logging.info("Remove the pretraining modules and model init parameter from ASR model w2v_path")
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
