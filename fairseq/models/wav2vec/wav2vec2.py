@@ -278,10 +278,13 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
     def get_extra_losses(self, net_output):
         loss_extra = self.online_model.get_extra_losses(net_output)
 
-        inputs = net_output["codebook_prob"] # B*T, C
-        targets = net_output["codebook_prob_target"].detach()
+        inputs = self.online_model.get_logits(net_output)
+        targets = net_output["logits_target"].detach() # [(1, negs), B, T]
 
-        loss = -(targets.float() * inputs.float().log()).sum(-1).mean().type_as(inputs)
+        # ce = -(targets.float().softmax(1) * inputs.float().log_softmax(1)).sum(1).mean().type_as(inputs)
+        # e = -(targets.float().softmax(1) * targets.float().log_softmax(1)).sum(1).mean().type_as(inputs)
+        # loss = e - ce
+        loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="sum")
 
         loss_extra.append(loss)
 
@@ -291,11 +294,16 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         self.offline_model.training = False
         with torch.no_grad():
             net_output = self.offline_model(**kwargs)
-        codebook_prob_target = net_output["codebook_prob"]
-        mask_indices = net_output["mask_indices"]
+        logits_target = self.offline_model.get_logits(net_output)
 
-        net_output = self.online_model(**kwargs, mask_indices=mask_indices)
-        net_output["codebook_prob_target"] = codebook_prob_target 
+        net_output = self.online_model(
+            **kwargs, 
+            mask_indices=net_output["mask_indices"], 
+            negs=net_output["negs"], 
+            cb_negs=net_output["cb_negs"]
+        )
+
+        net_output["logits_target"] = logits_target 
 
         return net_output
 
@@ -596,6 +604,8 @@ class Wav2Vec2Model(BaseFairseqModel):
         mask_indices=None,
         mask_channel_indices=None,
         padding_count=None,
+        negs=None,
+        cb_negs=None,
     ):
 
         if self.feature_grad_mult > 0:
@@ -693,33 +703,34 @@ class Wav2Vec2Model(BaseFairseqModel):
 
             y = self.project_q(y)
 
-            if self.negatives_from_everywhere:
-                neg_cands = self.quantizer(unmasked_features, produce_targets=False)[
-                    "x"
-                ]
-                negs, _ = self.sample_negatives(
-                    neg_cands,
-                    y.size(1),
-                    padding_count=padding_count,
-                )
-                negs = self.project_q(negs)
+            if negs is None:
+                if self.negatives_from_everywhere:
+                    neg_cands = self.quantizer(unmasked_features, produce_targets=False)[
+                        "x"
+                    ]
+                    negs, _ = self.sample_negatives(
+                        neg_cands,
+                        y.size(1),
+                        padding_count=padding_count,
+                    )
+                    negs = self.project_q(negs)
 
-            else:
-                negs, _ = self.sample_negatives(
-                    y,
-                    y.size(1),
-                    padding_count=padding_count,
-                )
-
-            if self.codebook_negatives > 0:
-                cb_negs = self.quantizer.sample_from_codebook(
-                    y.size(0) * y.size(1), self.codebook_negatives
-                )
-                cb_negs = cb_negs.view(
-                    self.codebook_negatives, y.size(0), y.size(1), -1
-                )  # order doesnt matter
-                cb_negs = self.project_q(cb_negs)
-                negs = torch.cat([negs, cb_negs], dim=0)
+                else:
+                    negs, _ = self.sample_negatives(
+                        y,
+                        y.size(1),
+                        padding_count=padding_count,
+                    )
+            if cb_negs is None:
+                if self.codebook_negatives > 0:
+                    cb_negs = self.quantizer.sample_from_codebook(
+                        y.size(0) * y.size(1), self.codebook_negatives
+                    )
+                    cb_negs = cb_negs.view(
+                        self.codebook_negatives, y.size(0), y.size(1), -1
+                    )  # order doesnt matter
+                    cb_negs = self.project_q(cb_negs)
+                    negs = torch.cat([negs, cb_negs], dim=0)
         else:
             y = self.project_q(y)
 
@@ -754,7 +765,8 @@ class Wav2Vec2Model(BaseFairseqModel):
             "padding_mask": padding_mask,
             "features_pen": features_pen,
             "mask_indices": mask_indices,
-            "codebook_prob": q["prob"],
+            "negs": negs,
+            "cb_negs": cb_negs,
         }
 
         if prob_ppl is not None:
