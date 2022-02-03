@@ -1,4 +1,5 @@
 # @package _group_
+
 common:
   fp16: true
   log_format: json
@@ -17,6 +18,7 @@ task:
   normalize: true
 
 dataset:
+  batch_size: 4
   num_workers: 6
   max_tokens: 900000
   skip_invalid_size_inputs_valid_test: true
@@ -32,7 +34,6 @@ criterion:
   loss_weights: [0.1, 0]
 
 optimization:
-  max_epoch: 800
   max_update: 1000000
   lr: [0.0001]
 
@@ -49,17 +50,9 @@ lr_scheduler:
 model:
   _name: wav2vec2
   quantize_targets: true
-  extractor_mode: default   ## change
-  # conv_feature_layers: “[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512, 2, 2)] + [(512, 2, 2)]”  ## change
-  # layer_norm_first: true
+  extractor_mode: default
   final_dim: 768
-  # latent_temp: [2.0,0.1,0.999995]
-  # encoder_layerdrop: 0.2
-  # dropout_input: 0.0
-  # dropout_features: 0.0
-  # dropout: 0.0
-  # attention_dropout: 0.0
-  conv_bias: false   ## change
+  conv_bias: false
   encoder_layers: 24
   encoder_embed_dim: 1024
   encoder_ffn_embed_dim: 4096

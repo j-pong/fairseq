@@ -284,7 +284,8 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         # ce = -(targets.float().softmax(1) * inputs.float().log_softmax(1)).sum(1).mean().type_as(inputs)
         # e = -(targets.float().softmax(1) * targets.float().log_softmax(1)).sum(1).mean().type_as(inputs)
         # loss = e - ce
-        loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="sum").type_as(inputs)
+        # loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="sum").type_as(inputs)
+        loss = -(targets.float().softmax(1) * inputs.float().log_softmax(1)).sum(1).mean().type_as(inputs)
 
         loss_extra.append(loss)
 
