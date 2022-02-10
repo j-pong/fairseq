@@ -294,19 +294,20 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         raise NotImplementedError
 
     def forward(self, **kwargs):
+        # 1.get net_output
+        net_output = self.online_model(**kwargs)
+        
+        # 2. get target logits
         self.offline_model.training = False
         with torch.no_grad():
-            net_output = self.offline_model(**kwargs)
-        logits_target = self.offline_model.get_logits(net_output)
-
-        net_output = self.online_model(
-            **kwargs, 
-            mask_indices=net_output["mask_indices"], 
-            negs=net_output["negs"], 
-            cb_negs=net_output["cb_negs"]
-        )
-
-        net_output["logits_target"] = logits_target 
+            net_output_offline = self.offline_model(
+                **kwargs,
+                mask=False,
+                mask_indices=net_output["mask_indices"],
+                negs=net_output["negs"],
+                cb_negs=net_output["cb_negs"]
+            )
+        net_output["logits_target"] = self.offline_model.get_logits(net_output_offline) 
 
         return net_output
 
@@ -683,8 +684,13 @@ class Wav2Vec2Model(BaseFairseqModel):
                 y = unmasked_features
         else:
             x = features
-            y = unmasked_features
-            mask_indices = None
+            if not is_xla_tensor(x) and mask_indices is not None:
+                y = unmasked_features[mask_indices].view(
+                    unmasked_features.size(0), -1, unmasked_features.size(-1)
+                )
+            else:
+                y = unmasked_features
+            mask_indices = None if mask_indices is None else mask_indices
 
         x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=layer)
 
