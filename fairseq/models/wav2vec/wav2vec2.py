@@ -279,13 +279,12 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         loss_extra = self.online_model.get_extra_losses(net_output)
 
         inputs = self.online_model.get_logits(net_output)
-        targets = net_output["logits_target"].detach() # [(1, negs), B, T]
+        targets = net_output["logits_target"].detach()
 
-        # ce = -(targets.float().softmax(1) * inputs.float().log_softmax(1)).sum(1).mean().type_as(inputs)
-        # e = -(targets.float().softmax(1) * targets.float().log_softmax(1)).sum(1).mean().type_as(inputs)
-        # loss = e - ce
-        loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="sum").type_as(inputs)
-        # loss = -(targets.float().softmax(1) * inputs.float().log_softmax(1)).sum(1).mean().type_as(inputs)
+        loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="none").sum(1)
+        mask = torch.logical_or(torch.isinf(loss), torch.isnan(loss))
+        loss = loss.masked_fill(mask, 0.0)
+        loss = (loss / (~mask).float().sum()).sum().type_as(inputs)
 
         loss_extra.append(loss)
 
@@ -704,34 +703,32 @@ class Wav2Vec2Model(BaseFairseqModel):
 
             y = self.project_q(y)
 
-            if negs is None:
-                if self.negatives_from_everywhere:
-                    neg_cands = self.quantizer(unmasked_features, produce_targets=False)[
-                        "x"
-                    ]
-                    negs, _ = self.sample_negatives(
-                        neg_cands,
-                        y.size(1),
-                        padding_count=padding_count,
-                    )
-                    negs = self.project_q(negs)
+            if self.negatives_from_everywhere:
+                neg_cands = self.quantizer(unmasked_features, produce_targets=False)[
+                    "x"
+                ]
+                negs, _ = self.sample_negatives(
+                    neg_cands,
+                    y.size(1),
+                    padding_count=padding_count,
+                ) if negs is None else (negs, None)
+                negs = self.project_q(negs)
 
-                else:
-                    negs, _ = self.sample_negatives(
-                        y,
-                        y.size(1),
-                        padding_count=padding_count,
-                    )
-            if cb_negs is None:
-                if self.codebook_negatives > 0:
-                    cb_negs = self.quantizer.sample_from_codebook(
-                        y.size(0) * y.size(1), self.codebook_negatives
-                    )
-                    cb_negs = cb_negs.view(
-                        self.codebook_negatives, y.size(0), y.size(1), -1
-                    )  # order doesnt matter
-                    cb_negs = self.project_q(cb_negs)
-                    negs = torch.cat([negs, cb_negs], dim=0)
+            else:
+                negs, _ = self.sample_negatives(
+                    y,
+                    y.size(1),
+                    padding_count=padding_count,
+                ) if negs is None else (negs, None)
+            if self.codebook_negatives > 0:
+                cb_negs = self.quantizer.sample_from_codebook(
+                    y.size(0) * y.size(1), self.codebook_negatives
+                ) if cb_negs is None else cb_negs
+                cb_negs = cb_negs.view(
+                    self.codebook_negatives, y.size(0), y.size(1), -1
+                )  # order doesnt matter
+                cb_negs = self.project_q(cb_negs)
+                negs = torch.cat([negs, cb_negs], dim=0)
         else:
             y = self.project_q(y)
 
@@ -740,14 +737,14 @@ class Wav2Vec2Model(BaseFairseqModel):
                     unmasked_features,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
                 negs = self.project_q(negs)
             else:
                 negs, _ = self.sample_negatives(
                     y,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
 
         if not is_xla_tensor(x):
             # tpu-comment: reducing the size in a dynamic way causes
