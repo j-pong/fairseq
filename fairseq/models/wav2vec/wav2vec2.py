@@ -291,6 +291,8 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         return loss_extra
     
     def update_offline_model(self):
+        """ Average the recent n-best models
+        """
         raise NotImplementedError
 
     def forward(self, **kwargs):
