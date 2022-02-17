@@ -252,8 +252,20 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         self.online_model = Wav2Vec2Model(cfg)
 
         if len(cfg.w2v_path) > 0:
+            import collections
             from fairseq import checkpoint_utils
             state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, {})
+            state_keys = list(state['model'].keys())
+
+            new_state = collections.OrderDcit()
+            for k in state_keys:
+                if k.find("offline_model.") != -1:
+                    pass
+                elif k.find("online_model.") != -1:
+                    new_state[k] = state[k]
+                    logging.info(f"online model parameter {k} is found!")
+            state['model'] = new_state
+                    
             self.offline_model.load_state_dict(state["model"], strict=True)
             self.online_model.load_state_dict(state["model"], strict=True)
 
