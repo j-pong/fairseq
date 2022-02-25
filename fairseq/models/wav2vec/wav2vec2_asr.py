@@ -354,6 +354,9 @@ class Wav2VecEncoder(FairseqEncoder):
             w2v_args = cfg.w2v_args
             if isinstance(w2v_args, Namespace):
                 cfg.w2v_args = w2v_args = convert_namespace_to_omegaconf(w2v_args)
+        # prevent load old pre-trainig model path: this argument should be applied to pre-training stage
+        # FIXME: More clever way!
+        w2v_args.model.w2v_path = ""
 
         assert cfg.normalize == w2v_args.task.normalize, (
             "Fine-tuning works best when data normalization is the same. "
