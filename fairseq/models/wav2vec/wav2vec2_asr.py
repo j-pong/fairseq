@@ -322,6 +322,7 @@ class Wav2VecEncoder(FairseqEncoder):
         self.apply_mask = cfg.apply_mask
 
         arg_overrides = {
+            "_name": "wav2vec2",
             "dropout": cfg.dropout,
             "activation_dropout": cfg.activation_dropout,
             "dropout_input": cfg.dropout_input,
@@ -375,7 +376,8 @@ class Wav2VecEncoder(FairseqEncoder):
             self.load_model_weights(state, model, cfg)
 
         model.remove_pretraining_modules()
-        model = model.online_model
+        if hasattr(model, "oneline_model"):
+            model = model.online_model
 
         super().__init__(task.source_dictionary)
 
