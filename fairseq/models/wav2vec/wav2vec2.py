@@ -5,7 +5,6 @@
 import logging
 import math
 from dataclasses import dataclass, field
-from omegaconf import MISSING, II, open_dict
 from typing import List, Tuple
 
 import numpy as np
@@ -239,6 +238,9 @@ class Wav2Vec2Config(FairseqDataclass):
     w2v_path: str = field(
         default="", metadata={"help": "path to wav2vec 2.0 model"}
     )
+    ctrl_type: str = field(
+        default="lwf", metadata={"help": "type of CTRL's transfer loss"}
+    )
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
 class Wav2Vec2MetaModel(BaseFairseqModel):
@@ -250,6 +252,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         for param in self.offline_model.parameters():
             param.requires_grad = False
         self.online_model = Wav2Vec2Model(cfg)
+        self.ctrl_type = cfg.ctrl_type
 
         if len(cfg.w2v_path) > 0:
             import collections
@@ -292,14 +295,28 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
 
     def get_extra_losses(self, net_output):
         loss_extra = self.online_model.get_extra_losses(net_output)
+        if self.ctrl_type == "lwf":
+            inputs = self.online_model.get_logits(net_output)
+            targets = net_output["logits_target"].detach()
 
-        inputs = self.online_model.get_logits(net_output)
-        targets = net_output["logits_target"].detach()
+            loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="none").sum(1)
+            mask = torch.logical_or(torch.isinf(loss), torch.isnan(loss))
+            loss = loss.masked_fill(mask, 0.0)
+            loss = (loss / (~mask).float().sum()).sum().type_as(inputs)
+        elif self.ctrl_type == "l2":
+            anchor_paraame = {name : p for name, p in self.offline_model.named_parameters()}
 
-        loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="none").sum(1)
-        mask = torch.logical_or(torch.isinf(loss), torch.isnan(loss))
-        loss = loss.masked_fill(mask, 0.0)
-        loss = (loss / (~mask).float().sum()).sum().type_as(inputs)
+            loss = 0.0
+            n_grad_param = 0
+            for name, p in self.online_model.named_parameters():
+                if p.requires_grad:
+                    loss += F.mse_loss(p.float(), anchor_paraame[name].float())
+                    n_grad_param += 1
+            loss = (loss / n_grad_param).type_as(p)
+        elif self.ctrl_type == "ewc":
+            raise NotImplementedError
+        else:
+            raise AttributeError
 
         loss_extra.append(loss)
 
