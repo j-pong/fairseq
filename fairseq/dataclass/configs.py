@@ -249,6 +249,10 @@ class CommonConfig(FairseqDataclass):
         default=False,
         metadata={"help": "L2 transfer"},
     )
+    l2_model_path: str = field(
+        default="",
+        metadata={"help": "L2 transfer"},
+    )
     # mode imm related
     save_weight: bool = field(
         default=False,

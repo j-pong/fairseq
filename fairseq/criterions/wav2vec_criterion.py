@@ -85,13 +85,14 @@ class Wav2vecCriterion(FairseqCriterion):
             loss = (loss * mi).sum() if reduce else (loss * mi)
         
 
-        
+        # print(self.l2)
         if self.l2: #
+            # print("l2")
             temp = loss.clone().detach()
             l2_temp = 0
             for name, p in model.named_parameters():
                 if p.requires_grad:
-                    l2 = p - self.old_params[name].cuda()
+                    l2 = p - self.old_params[name]
                     l2_temp += self.beta * torch.sum(torch.square(l2.to(torch.float32))).to(torch.float16)
                 # print(torch.sum(torch.square(p.clone() - old_params[name])))
                 loss += l2_temp

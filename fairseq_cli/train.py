@@ -177,14 +177,18 @@ def main(cfg: FairseqConfig) -> None:
 
     train_meter = meters.StopwatchMeter()
     train_meter.start()
-    trainer.optimizer.l2 = cfg.common.l2
+    trainer.criterion.l2 = cfg.common.l2
     trainer.save_grad = cfg.common.save_grad
 
 
 
     if cfg.common.l2:
         trainer.l2_beta = cfg.common.l2_beta
-        trainer.criterion.old_params = {name: p.data.clone().detach().to('cpu') for name, p in trainer.model.named_parameters() if p.requires_grad}
+        # trainer.criterion.old_params = {name: p.data.clone().detach() for name, p in trainer.model.named_parameters() if p.requires_grad}
+        trainer.criterion.old_params = torch.load(cfg.common.l2_model_path)
+        for key in list(trainer.criterion.old_params.keys()):
+            trainer.criterion.old_params[key] = trainer.criterion.old_params[key].cuda()
+        # print(trainer.criterion.old_params.keys())
 
     if cfg.common.save_weight:
         temp = {x[0]: x[1].data.to('cpu') for x in trainer.model.named_parameters() if x[1].requires_grad}

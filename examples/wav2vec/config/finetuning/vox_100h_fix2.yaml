@@ -4,12 +4,9 @@ common:
   fp16: true
   log_format: json
   log_interval: 200
-  imm_fine: false
-  # imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM2/model_IMM_wsj_wsj.pt'
-  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_TED_L2_0.001_IMM2/model_IMM_ted_ted_ted.pt'
-
+  
 checkpoint:
-  save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/2022-03-21/12-14-02/checkpoints
+  # save_dir: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM_fine_freeze1200_lr0.00002/checkpoints'
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
 

@@ -4,12 +4,11 @@ common:
   fp16: true
   log_format: json
   log_interval: 200
-  imm_fine: false
-  # imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_L2_0.001_IMM2/model_IMM_wsj_wsj.pt'
-  imm_fine_model_path: '/home/jpong/HYlab/examples/asr/librispeech/outputs/libri960big_WSJ_TED_L2_0.001_IMM2/model_IMM_ted_ted_ted.pt'
 
 checkpoint:
-  save_dir: /home/jpong/HYlab/examples/asr/librispeech/outputs/2022-03-21/12-14-02/checkpoints
+  save_interval: 50
+  save_interval_updates: 10000
+  keep_interval_updates: 1
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
 
@@ -23,7 +22,9 @@ dataset:
   num_workers: 6
   max_tokens: 1280000
   skip_invalid_size_inputs_valid_test: true
-  valid_subset: valid
+  validate_after_updates: 10000
+  validate_interval: 50
+  valid_subset: dev_other
 
 distributed_training:
   ddp_backend: legacy_ddp
@@ -34,8 +35,8 @@ criterion:
   zero_infinity: true
 
 optimization:
-  max_update: 80000
-  lr: [0.00002]
+  max_update: 20000
+  lr: [0.0001]
   sentence_avg: true
   update_freq: [5]
 
@@ -53,8 +54,8 @@ model:
   _name: wav2vec_ctc
   w2v_path: ???
   apply_mask: true
-  mask_prob: 0.25
-  mask_channel_prob: 0.5
+  mask_prob: 0.75
+  mask_channel_prob: 0.25
   mask_channel_length: 64
   layerdrop: 0.1
   activation_dropout: 0.1
