@@ -2,7 +2,7 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import List, Tuple
@@ -235,7 +235,120 @@ class Wav2Vec2Config(FairseqDataclass):
         default=False,
         metadata={"help": "recompute activations and save memory for extra compute"},
     )
+    w2v_path: str = field(
+        default="", metadata={"help": "path to wav2vec 2.0 model"}
+    )
+    ctrl_type: str = field(
+        default="lwf", metadata={"help": "type of CTRL's transfer loss"}
+    )
 
+@register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
+class Wav2Vec2MetaModel(BaseFairseqModel):
+    def __init__(self, cfg: Wav2Vec2Config):
+        super().__init__()
+        self.cfg = cfg
+
+        self.offline_model = Wav2Vec2Model(cfg).eval()
+        for param in self.offline_model.parameters():
+            param.requires_grad = False
+        self.online_model = Wav2Vec2Model(cfg)
+        self.ctrl_type = cfg.ctrl_type
+
+        if len(cfg.w2v_path) > 0:
+            import collections
+            from fairseq import checkpoint_utils
+            state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, {})
+            state_keys = list(state['model'].keys())
+
+            new_state = collections.OrderedDict()
+            flag = False
+            for k in state_keys:
+                if k.find("offline_model.") != -1:
+                    pass
+                elif k.find("online_model.") != -1:
+                    new_state[k.replace("online_model.","")] = state["model"][k]
+                    logging.info(f"online model parameter {k} is found!")
+                    flag = True
+            if flag:
+                state['model'] = new_state
+                    
+            self.offline_model.load_state_dict(state["model"], strict=True)
+            self.online_model.load_state_dict(state["model"], strict=True)
+
+            logging.info(f"Load pre-trained model from {cfg.w2v_path}")
+        else:
+            logging.info("No pre-trained model")
+
+        assert not self.offline_model.training 
+    
+    @classmethod
+    def build_model(cls, cfg: Wav2Vec2Config, task=None):
+        """Build a new model instance."""
+
+        return cls(cfg)
+
+    def get_logits(self, net_output):
+        return self.online_model.get_logits(net_output)
+    
+    def get_targets(self, sample, net_output):
+        return self.online_model.get_targets(sample, net_output)
+
+    def get_extra_losses(self, net_output):
+        loss_extra = self.online_model.get_extra_losses(net_output)
+        if self.ctrl_type == "lwf":
+            inputs = self.online_model.get_logits(net_output)
+            targets = net_output["logits_target"].detach()
+
+            loss = F.kl_div(inputs.float().log_softmax(1), targets.float().softmax(1), reduction="none").sum(1)
+            mask = torch.logical_or(torch.isinf(loss), torch.isnan(loss))
+            loss = loss.masked_fill(mask, 0.0)
+            loss = (loss / (~mask).float().sum()).sum().type_as(inputs)
+        elif self.ctrl_type == "l2":
+            anchor_paraame = {name : p for name, p in self.offline_model.named_parameters()}
+
+            loss = 0.0
+            n_grad_param = 0
+            for name, p in self.online_model.named_parameters():
+                if p.requires_grad:
+                    loss += F.mse_loss(p.float(), anchor_paraame[name].float())
+                    n_grad_param += 1
+            loss = (loss / n_grad_param).type_as(p)
+        elif self.ctrl_type == "ewc":
+            raise NotImplementedError
+        else:
+            raise AttributeError
+
+        loss_extra.append(loss)
+
+        return loss_extra
+    
+    def update_offline_model(self):
+        """ Average the recent n-best models
+        """
+        raise NotImplementedError
+
+    def forward(self, **kwargs):
+        # 1.get net_output
+        net_output = self.online_model(**kwargs)
+        
+        # 2. get target logits
+        self.offline_model.training = False
+        with torch.no_grad():
+            net_output_offline = self.offline_model(
+                **kwargs,
+                mask=False,
+                mask_indices=net_output["mask_indices"],
+                negs=net_output["negs"],
+                cb_negs=net_output["cb_negs"]
+            )
+        net_output["logits_target"] = self.offline_model.get_logits(net_output_offline) 
+
+        return net_output
+
+    def remove_pretraining_modules(self):
+        self.offline_model = None
+        self.online_model.remove_pretraining_modules()
+        logging.info("Remove the pretraining modules and model init parameter from ASR model w2v_path")
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
@@ -529,6 +642,8 @@ class Wav2Vec2Model(BaseFairseqModel):
         mask_indices=None,
         mask_channel_indices=None,
         padding_count=None,
+        negs=None,
+        cb_negs=None,
     ):
 
         if self.feature_grad_mult > 0:
@@ -603,8 +718,13 @@ class Wav2Vec2Model(BaseFairseqModel):
                 y = unmasked_features
         else:
             x = features
-            y = unmasked_features
-            mask_indices = None
+            if not is_xla_tensor(x) and mask_indices is not None:
+                y = unmasked_features[mask_indices].view(
+                    unmasked_features.size(0), -1, unmasked_features.size(-1)
+                )
+            else:
+                y = unmasked_features
+            mask_indices = None if mask_indices is None else mask_indices
 
         x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=layer)
 
@@ -634,7 +754,7 @@ class Wav2Vec2Model(BaseFairseqModel):
                     neg_cands,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
                 negs = self.project_q(negs)
 
             else:
@@ -642,12 +762,11 @@ class Wav2Vec2Model(BaseFairseqModel):
                     y,
                     y.size(1),
                     padding_count=padding_count,
-                )
-
+                ) if negs is None else (negs, None)
             if self.codebook_negatives > 0:
                 cb_negs = self.quantizer.sample_from_codebook(
                     y.size(0) * y.size(1), self.codebook_negatives
-                )
+                ) if cb_negs is None else cb_negs
                 cb_negs = cb_negs.view(
                     self.codebook_negatives, y.size(0), y.size(1), -1
                 )  # order doesnt matter
@@ -661,14 +780,14 @@ class Wav2Vec2Model(BaseFairseqModel):
                     unmasked_features,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
                 negs = self.project_q(negs)
             else:
                 negs, _ = self.sample_negatives(
                     y,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
 
         if not is_xla_tensor(x):
             # tpu-comment: reducing the size in a dynamic way causes
@@ -686,6 +805,9 @@ class Wav2Vec2Model(BaseFairseqModel):
             "x": x,
             "padding_mask": padding_mask,
             "features_pen": features_pen,
+            "mask_indices": mask_indices,
+            "negs": negs,
+            "cb_negs": cb_negs,
         }
 
         if prob_ppl is not None:
