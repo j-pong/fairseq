@@ -321,6 +321,11 @@ class SpeechToTextDataset(FairseqDataset):
             )
             prev_output_tokens = prev_output_tokens.index_select(0, order)
             ntokens = sum(x.target.size(0) for x in samples)
+            
+            transducer = True
+            if transducer:
+                target[target == self.tgt_dict.eos()] = self.tgt_dict.pad()
+                prev_output_tokens[prev_output_tokens == self.tgt_dict.eos()] = self.tgt_dict.pad()
 
         speaker = None
         if self.speaker_to_id is not None:
@@ -334,6 +339,7 @@ class SpeechToTextDataset(FairseqDataset):
             "src_tokens": frames,
             "src_lengths": n_frames,
             "prev_output_tokens": prev_output_tokens,
+            "prev_output_tokens_length": target_lengths,
         }
         out = {
             "id": indices,

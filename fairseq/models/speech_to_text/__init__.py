@@ -7,3 +7,5 @@ from .berard import *  # noqa
 from .convtransformer import *  # noqa
 from .s2t_transformer import *  # noqa
 from .xm_transformer import *  # noqa
+from .contra_transformer_asr import *  # noqa
+from .contra_transformer import *  # noqa
