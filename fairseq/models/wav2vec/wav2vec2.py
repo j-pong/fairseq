@@ -314,6 +314,13 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
                     n_grad_param += 1
             loss = (loss / n_grad_param).type_as(p)
         elif self.ctrl_type == "ewc":
+            """
+            backup = self.criterion.loss_weights[2]
+            self.criterion.loss_weights[2] = 0.
+            loss = asdf
+            self.criterion.loss_weights[2] = backup
+            
+            """
             raise NotImplementedError
         else:
             raise AttributeError
