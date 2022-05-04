@@ -30,6 +30,8 @@ from fairseq.modules.transformer_sentence_encoder import init_bert_params
 from fairseq.utils import buffered_arange, index_put, is_xla_tensor
 from fairseq.distributed import fsdp_wrap
 
+from omegaconf import II
+import copy
 
 EXTRACTOR_MODE_CHOICES = ChoiceEnum(["default", "layer_norm"])
 MASKING_DISTRIBUTION_CHOICES = ChoiceEnum(["static", "uniform", "normal", "poisson"])
@@ -238,9 +240,30 @@ class Wav2Vec2Config(FairseqDataclass):
     w2v_path: str = field(
         default="", metadata={"help": "path to wav2vec 2.0 model"}
     )
+
+    # Momentum-Continual Representation Learning
     ctrl_type: str = field(
         default="lwf", metadata={"help": "type of CTRL's transfer loss"}
     )
+
+    # EMA Ensemble Method (Exponentially Moving Average)
+    ema_decay: float = field(default=0.999, metadata={"help": "initial ema decay rate"})
+    ema_end_decay: float = field(
+        default=0.9999, metadata={"help": "final ema decay rate"}
+    )
+
+    # when to finish annealing ema decay rate
+    ema_anneal_end_step: int = II("optimization.max_update")
+
+    ema_transformer_only: bool = field(
+        default=True,
+        metadata={"help": "whether to momentum update only the transformer"},
+    )
+
+def get_annealed_rate(start, end, curr_step, total_steps):
+    r = end - start
+    pct_remaining = 1 - curr_step / total_steps
+    return end - r * pct_remaining    
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
 class Wav2Vec2MetaModel(BaseFairseqModel):
@@ -253,6 +276,11 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
             param.requires_grad = False
         self.online_model = Wav2Vec2Model(cfg)
         self.ctrl_type = cfg.ctrl_type
+        self.num_updates = 0
+        self.ema_decay = cfg.ema_decay
+        self.ema_end_decay = cfg.ema_end_decay
+        self.ema_anneal_end_step = cfg.ema_anneal_end_step
+        self.ema_transformer_only = cfg.ema_transformer_only
 
         if len(cfg.w2v_path) > 0:
             import collections
@@ -322,10 +350,61 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
 
         return loss_extra
     
-    def update_offline_model(self):
+    @torch.no_grad()
+    def update_offline_model(self, offline_model):
         """ Average the recent n-best models
         """
-        raise NotImplementedError
+        # set decay with current num_update 
+        if self.ema_decay != self.ema_end_decay:
+            if self.num_updates >= self.ema_anneal_end_step:
+                decay = self.ema_end_decay
+            else:
+                decay = get_annealed_rate(
+                        self.ema_decay,
+                        self.ema_end_decay,
+                        self.num_updates,  
+                        self.ema_anneal_end_step,
+                    )
+        # set skip_keys
+        skip_keys = set()
+        
+        if self.ema_transformer_only == True:
+            for k, _ in self.offline_model.named_parameters():
+                skip_keys.add(f"encoder.pos_conv.{k}")
+                skip_keys.add(f"feature_extractor.{k}")
+
+        # set model params (online offline model)
+        def _to_float(t):
+            return t.float() if torch.is_floating_point(t) else t        
+
+        std_params = {name : _to_float(copy.deepcopy(p)) for name, p in self.online_model.named_parameters()}
+        tch_params = {name : _to_float(copy.deepcopy(p)) for name, p in self.offline_model.named_parameters()}
+        
+        # calculate ema
+        for name, p in self.offline_model.state_dict().items():
+            if name in skip_keys:
+                param = std_params[name].clone()
+                tch_params[name].copy_(param)
+            else:
+                tch_params[name].mul_(decay)
+                tch_params[name].add_(std_params[name], alpha=1 - decay)
+        
+        """Load parameter to offline model from EMA parameter"""
+        # self.offline_model.load_state_dict(tch_params, strict=True)
+        if self.training:
+            for name, p in self.offline_model.named_parameters():
+                try:
+                    p.copy_(tch_params[name])
+                except:
+                    logging.info(f"{name} parameter is not exsist!")
+                    print(tch_params.keys())
+                    exit()
+
+    def set_num_updates(self, num_updates):
+        """Set the number of parameters updates."""
+        super().set_num_updates(num_updates)
+        self.num_updates = num_updates
+        self.update_offline_model(self.offline_model)
 
     def forward(self, **kwargs):
         # 1.get net_output
