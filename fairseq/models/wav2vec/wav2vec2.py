@@ -383,7 +383,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         # calculate ema
         for name, p in self.offline_model.state_dict().items():
             if name in skip_keys:
-                param = std_params[name].clone()
+                param = tch_params[name].clone()
                 tch_params[name].copy_(param)
             else:
                 tch_params[name].mul_(decay)
