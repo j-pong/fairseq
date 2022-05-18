@@ -588,6 +588,8 @@ class Wav2Vec2Model(BaseFairseqModel):
         mask_indices=None,
         mask_channel_indices=None,
         padding_count=None,
+        negs=None,
+        cb_negs=None,
     ):
 
         if self.feature_grad_mult > 0:
@@ -669,8 +671,13 @@ class Wav2Vec2Model(BaseFairseqModel):
                 y = unmasked_features
         else:
             x = features
-            y = unmasked_features
-            mask_indices = None
+            if not is_xla_tensor(x) and mask_indices is not None:
+                y = unmasked_features[mask_indices].view(
+                    unmasked_features.size(0), -1, unmasked_features.size(-1)
+                )
+            else:
+                y = unmasked_features
+            mask_indices = None if mask_indices is None else mask_indices
 
         x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=layer)
 
@@ -696,7 +703,7 @@ class Wav2Vec2Model(BaseFairseqModel):
                     y,
                     mask_indices[0].sum(),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
                 y = y[mask_indices].view(y.size(0), -1, y.size(-1))
 
             else:
@@ -713,12 +720,12 @@ class Wav2Vec2Model(BaseFairseqModel):
                     y,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
 
             if self.codebook_negatives > 0:
                 cb_negs = self.quantizer.sample_from_codebook(
                     y.size(0) * y.size(1), self.codebook_negatives
-                )
+                ) if cb_negs is None else cb_negs
                 cb_negs = cb_negs.view(
                     self.codebook_negatives, y.size(0), y.size(1), -1
                 )  # order doesnt matter
@@ -732,14 +739,14 @@ class Wav2Vec2Model(BaseFairseqModel):
                     unmasked_features,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
                 negs = self.project_q(negs)
             else:
                 negs, _ = self.sample_negatives(
                     y,
                     y.size(1),
                     padding_count=padding_count,
-                )
+                ) if negs is None else (negs, None)
 
         if not is_xla_tensor(x):
             # tpu-comment: reducing the size in a dynamic way causes
@@ -757,6 +764,9 @@ class Wav2Vec2Model(BaseFairseqModel):
             "x": x,
             "padding_mask": padding_mask,
             "features_pen": features_pen,
+            "mask_indices": mask_indices,
+            "negs": negs,
+            "cb_negs": cb_negs,
         }
 
         if prob_ppl is not None:
