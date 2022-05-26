@@ -255,14 +255,18 @@ class Wav2Vec2Config(FairseqDataclass):
     # when to finish annealing ema decay rate
     ema_anneal_end_step: int = II("optimization.max_update")
 
+    ema_anneal_start_step: int = field(
+        default=0, metadata={"help": "start ema decay rate"}
+    )
+
     ema_transformer_only: bool = field(
         default=True,
         metadata={"help": "whether to momentum update only the transformer"},
     )
 
-def get_annealed_rate(start, end, curr_step, total_steps):
+def get_annealed_rate(start, end, curr_step, total_steps, start_step):
     r = end - start
-    pct_remaining = 1 - curr_step / total_steps
+    pct_remaining = 1 - (curr_step - start_step) / (total_steps - start_step)
     return end - r * pct_remaining    
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
@@ -280,6 +284,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         self.ema_decay = cfg.ema_decay
         self.ema_end_decay = cfg.ema_end_decay
         self.ema_anneal_end_step = cfg.ema_anneal_end_step
+        self.ema_anneal_start_step = cfg.ema_anneal_start_step
         self.ema_transformer_only = cfg.ema_transformer_only
 
         if len(cfg.w2v_path) > 0:
@@ -358,12 +363,15 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         if self.ema_decay != self.ema_end_decay:
             if self.num_updates >= self.ema_anneal_end_step:
                 decay = self.ema_end_decay
+            elif self.num_updates < self.ema_anneal_start_step:
+                decay = 1.0
             else:
                 decay = get_annealed_rate(
                         self.ema_decay,
                         self.ema_end_decay,
                         self.num_updates,  
                         self.ema_anneal_end_step,
+                        self.ema_anneal_start_step,
                     )
         # set skip_keys
         skip_keys = set()
