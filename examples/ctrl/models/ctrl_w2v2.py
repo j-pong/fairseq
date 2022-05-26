@@ -73,7 +73,7 @@ class CtrlWav2Vec2Model(BaseFairseqModel):
         #     del state["model"]["_ema"]
 
         # load from CtrlModel
-        r = re.compile("model_anchor.\d.")
+        r = re.compile("model_anchor\.")
         filtered_list = list(filter(r.match, state["model"].keys()))
 
         new_big_dict = {
