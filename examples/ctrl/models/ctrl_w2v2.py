@@ -39,7 +39,7 @@ class CtrlWav2Vec2Model(BaseFairseqModel):
         # Manually fix the configuration
         arg_overrides = {}
 
-        if cfg.ctrl_w2v_path is not None:
+        if cfg.ctrl_w2v_path is not None and not cfg.no_ctrl_pretrained_weights:
             state = checkpoint_utils.load_checkpoint_to_cpu(cfg.ctrl_w2v_path, arg_overrides)
             w2v_args = state.get("cfg", None)
             if w2v_args is None:
@@ -49,6 +49,8 @@ class CtrlWav2Vec2Model(BaseFairseqModel):
             # cfg.w2v_args = w2v_args
 
             # logging.info(w2v_args)
+        else:
+            state = None
         
         model = Wav2Vec2Model(cfg)
         model_anchor = Wav2Vec2Model(cfg)
