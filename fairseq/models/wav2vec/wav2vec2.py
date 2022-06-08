@@ -255,6 +255,10 @@ class Wav2Vec2Config(FairseqDataclass):
     # when to finish annealing ema decay rate
     ema_anneal_end_step: int = II("optimization.max_update")
 
+    ema_anneal_start_step: int = field(
+        default=0, metadata={"help": "start ema decay rate"}
+    )
+
     ema_transformer_only: bool = field(
         default=True,
         metadata={"help": "whether to momentum update only the transformer"},
