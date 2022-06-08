@@ -264,7 +264,7 @@ class Wav2Vec2Config(FairseqDataclass):
         metadata={"help": "whether to momentum update only the transformer"},
     )
 
-def get_annealed_rate(start, end, curr_step, start_step):
+def get_annealed_rate(start, end, curr_step, total_steps, start_step):
     r = end - start
     pct_remaining = 1 - (curr_step - start_step) / (total_steps - start_step)
     return end - r * pct_remaining    
