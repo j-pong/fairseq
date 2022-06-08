@@ -260,9 +260,9 @@ class Wav2Vec2Config(FairseqDataclass):
         metadata={"help": "whether to momentum update only the transformer"},
     )
 
-def get_annealed_rate(start, end, curr_step, total_steps):
+def get_annealed_rate(start, end, curr_step, start_step):
     r = end - start
-    pct_remaining = 1 - curr_step / total_steps
+    pct_remaining = 1 - (curr_step - start_step) / (total_steps - start_step)
     return end - r * pct_remaining    
 
 @register_model("wav2vec2_meta", dataclass=Wav2Vec2Config)
@@ -364,6 +364,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
                         self.ema_end_decay,
                         self.num_updates,  
                         self.ema_anneal_end_step,
+                        self.ema_anneal_start_step,
                     )
         # set skip_keys
         skip_keys = set()
