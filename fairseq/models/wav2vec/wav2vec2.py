@@ -280,6 +280,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         self.ema_decay = cfg.ema_decay
         self.ema_end_decay = cfg.ema_end_decay
         self.ema_anneal_end_step = cfg.ema_anneal_end_step
+        self.ema_anneal_start_step = cfg.ema_anneal_start_step
         self.ema_transformer_only = cfg.ema_transformer_only
 
         if len(cfg.w2v_path) > 0:
@@ -358,6 +359,8 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         if self.ema_decay != self.ema_end_decay:
             if self.num_updates >= self.ema_anneal_end_step:
                 decay = self.ema_end_decay
+            elif self.num_updates < self.ema_anneal_start_step:
+                decay = 1.0
             else:
                 decay = get_annealed_rate(
                         self.ema_decay,
