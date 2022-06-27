@@ -264,6 +264,10 @@ class Wav2Vec2Config(FairseqDataclass):
         metadata={"help": "whether to momentum update only the transformer"},
     )
 
+    ema_step: int = field(
+        default=1, metadata={"help": "step of ema"}
+    )
+
 def get_annealed_rate(start, end, curr_step, total_steps, start_step):
     r = end - start
     pct_remaining = 1 - (curr_step - start_step) / (total_steps - start_step)
@@ -286,6 +290,7 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         self.ema_anneal_end_step = cfg.ema_anneal_end_step
         self.ema_anneal_start_step = cfg.ema_anneal_start_step
         self.ema_transformer_only = cfg.ema_transformer_only
+        self.ema_step = cfg.ema_step
 
         if len(cfg.w2v_path) > 0:
             import collections
@@ -415,7 +420,9 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
         """Set the number of parameters updates."""
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
-        self.update_offline_model(self.offline_model)
+
+        if self.num_updates % self.ema_step == 0:
+            self.update_offline_model(self.offline_model)
 
     def forward(self, **kwargs):
         # 1.get net_output
