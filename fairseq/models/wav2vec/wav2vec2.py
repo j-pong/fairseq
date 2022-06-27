@@ -379,7 +379,10 @@ class Wav2Vec2MetaModel(BaseFairseqModel):
                         self.ema_anneal_start_step,
                     )
         else:
-            decay = self.ema_end_decay
+            if self.num_updates < self.ema_anneal_start_step:
+                decay = 1.0
+            else:
+                decay = self.ema_end_decay
 
         # set skip_keys
         skip_keys = set()
