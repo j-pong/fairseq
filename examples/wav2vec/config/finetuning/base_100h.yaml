@@ -6,6 +6,7 @@ common:
   log_interval: 200
 
 checkpoint:
+  keep_best_checkpoints: 10
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
 
