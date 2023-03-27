@@ -161,15 +161,19 @@ class CtcCriterion(FairseqCriterion):
             target_lengths = pad_mask.sum(-1)
 
         with torch.backends.cudnn.flags(enabled=False):
-            loss = F.ctc_loss(
-                lprobs,
-                targets_flat,
-                input_lengths,
-                target_lengths,
-                blank=self.blank_idx,
-                reduction="sum",
-                zero_infinity=self.zero_infinity,
-            )
+            try:
+                loss = F.ctc_loss(
+                    lprobs,
+                    targets_flat,
+                    input_lengths,
+                    target_lengths,
+                    blank=self.blank_idx,
+                    reduction="sum",
+                    zero_infinity=self.zero_infinity,
+                )
+            except:
+                print(sample["target"].size(), lprobs.size())
+                exit()
 
         ntokens = (
             sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()

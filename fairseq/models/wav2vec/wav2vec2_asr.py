@@ -565,6 +565,44 @@ class Wav2VecEncoder(FairseqEncoder):
             x = res["x"]
             padding_mask = res["padding_mask"]
 
+            if "duration" in kwargs and self.training:
+                duration = kwargs["duration"] # [B, N]
+
+                x_new = []
+                x_new_length = []
+                for i, x_ in enumerate(x):
+                    d = duration[i]
+
+                    # Get valid duration
+                    d = d[d != -1]
+
+                    # Calculate split lengths for torch.split
+                    d = d[1:] - d[:-1]
+
+                    # Exception control 
+                    # NOTE: convolution shrink the time length. 
+                    # Thus somtimes pseudo state and current state have different length.
+                    true_time = x_.size(0)
+                    expected_time = d.sum()
+                    d[-1] = d[-1] + (true_time - expected_time)
+
+                    # Grouping results
+                    x_ = torch.split(x_, d.tolist())
+
+                    x_new = x_new + list(x_)
+                    x_new_length.append(d)
+
+                x = torch.nn.utils.rnn.pad_sequence(
+                    x_new, 
+                    batch_first=True, 
+                    padding_value=0
+                )
+                x_new_length = torch.cat(x_new_length)
+
+                bsz, tsz, _ = x.size()
+                padding_base = torch.arange(tsz).expand(bsz, tsz).to(x.device)
+                padding_mask = padding_base >= x_new_length.unsqueeze(1)
+
             # B x T x C -> T x B x C
             x = x.transpose(0, 1)
 

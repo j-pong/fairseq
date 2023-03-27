@@ -136,6 +136,8 @@ class AudioFinetuningTask(AudioPretrainingTask):
         )
         data_path = self.cfg.data
         label_path = os.path.join(data_path, f"{split}.{task_cfg.labels}")
+        state_path = os.path.join(data_path, f"{split}.{'state'}")
+
         skipped_indices = getattr(self.datasets[split], "skipped_indices", set())
         text_compressor = TextCompressor(level=text_compression_level)
         with open(label_path, "r") as f:
@@ -144,6 +146,15 @@ class AudioFinetuningTask(AudioPretrainingTask):
                 for i, l in enumerate(f)
                 if i not in skipped_indices
             ]
+        if os.path.exists(state_path):
+            with open(state_path, "r") as f:
+                state = [
+                    d
+                    for i, d in enumerate(f)
+                    if i not in skipped_indices
+                ]
+        else:
+            state = None
 
         assert len(labels) == len(self.datasets[split]), (
             f"labels length ({len(labels)}) and dataset length "
@@ -155,8 +166,15 @@ class AudioFinetuningTask(AudioPretrainingTask):
         self.datasets[split] = AddTargetDataset(
             self.datasets[split],
             labels,
+            state,
             pad=self.target_dictionary.pad(),
             eos=self.target_dictionary.eos(),
+            blank=(
+                self.target_dictionary.index("<ctc_blank>")
+                if "<ctc_blank>" in self.target_dictionary.indices
+                else self.target_dictionary.bos()
+            ),
+            split=self.target_dictionary.unk() + 1,
             batch_targets=True,
             process_label=process_label,
             label_len_fn=label_len_fn,
