@@ -999,8 +999,8 @@ class TransformerEncoder(nn.Module):
 
         self.apply(init_bert_params)
 
-    def forward(self, x, padding_mask=None, layer=None):
-        x, layer_results = self.extract_features(x, padding_mask, layer)
+    def forward(self, x, padding_mask=None, layer=None, duration=None):
+        x, layer_results = self.extract_features(x, padding_mask, layer, duration=duration)
 
         if self.layer_norm_first and layer is None:
             x = self.layer_norm(x)
@@ -1013,6 +1013,7 @@ class TransformerEncoder(nn.Module):
         padding_mask=None,
         tgt_layer=None,
         min_layer=0,
+        duration=None,
     ):
 
         if padding_mask is not None:
@@ -1036,6 +1037,10 @@ class TransformerEncoder(nn.Module):
             padding_mask, _ = pad_to_multiple(
                 padding_mask, self.required_seq_len_multiple, dim=-1, value=True
             )
+        if duration is not None and self.training:
+            pre_compute_mask = self.prior_mask(x, duration)
+        else:
+            pre_compute_mask = None
         x = F.dropout(x, p=self.dropout, training=self.training)
 
         # B x T x C -> T x B x C
@@ -1047,8 +1052,19 @@ class TransformerEncoder(nn.Module):
             dropout_probability = np.random.random() if self.layerdrop > 0 else 1
             if not self.training or (dropout_probability > self.layerdrop):
                 x, (z, lr) = layer(
-                    x, self_attn_padding_mask=padding_mask, need_weights=False
+                    x, self_attn_padding_mask=padding_mask, 
+                    need_weights=False, 
+                    self_attn_mask=pre_compute_mask.repeat(layer.num_attention_heads, 1, 1) if pre_compute_mask is not None else None
                 )
+                # print(z.size())
+                # import matplotlib.pyplot as plt
+                # plt.subplot(2,1,1)
+                # plt.imshow(z[0].detach().cpu().numpy(), aspect="auto")
+                # plt.subplot(2,1,2)
+                # plt.imshow(pre_compute_mask[0].detach().cpu().numpy(), aspect="auto")
+                # plt.savefig("test.png")
+                # exit()
+
                 if i >= min_layer:
                     layer_results.append((x, z, lr))
             if i == tgt_layer:
@@ -1083,6 +1099,43 @@ class TransformerEncoder(nn.Module):
     def upgrade_state_dict_named(self, state_dict, name):
         """Upgrade a (possibly old) state dict for new versions of fairseq."""
         return state_dict
+    
+    #TODO: duplicated with the wav2vec2_asr.py
+    def duration_to_length(self, x, d):
+        # Get valid duration
+        d = d[d != -1]
+
+        # Calculate split lengths for torch.split
+        d = d[1:] - d[:-1]
+
+        # Exception control 
+        # NOTE: convolution shrink the time length. 
+        # Thus somtimes pseudo state and current state have different length.
+        true_time = x.size(0)
+        expected_time = d.sum()
+        d[-1] = d[-1] + (true_time - expected_time)
+        
+        return d
+    
+    def prior_mask(self, x, duration):
+        T = x.size(1)
+        masks = []
+        for i, x_ in enumerate(x):
+            d = duration[i]
+            d = self.duration_to_length(x_, d)
+
+            mask = torch.zeros(T, T, dtype=torch.bool).to(d.device)
+
+            start = 0
+            for length in d:
+                mask[start:start+length, start:start+length] = 1
+                start += length
+
+            masks.append(~mask)
+
+        masks = torch.stack(masks)
+        
+        return masks
 
 
 class ConformerEncoder(TransformerEncoder):
@@ -1195,6 +1248,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.embedding_dim = embedding_dim
         self.dropout = dropout
         self.activation_dropout = activation_dropout
+        self.num_attention_heads = num_attention_heads
 
         # Initialize blocks
         self.activation_fn = utils.get_activation_fn(activation_fn)
@@ -1262,6 +1316,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 key=x,
                 value=x,
                 key_padding_mask=self_attn_padding_mask,
+                attn_mask=self_attn_mask,
                 need_weights=False,
             )
 

@@ -305,6 +305,7 @@ class Data2VecAudioModel(BaseFairseqModel):
         mask_indices=None,
         mask_channel_indices=None,
         padding_count=None,
+        duration=None
     ):
         features = source
 
@@ -367,6 +368,7 @@ class Data2VecAudioModel(BaseFairseqModel):
             x,
             padding_mask=padding_mask,
             layer=layer,
+            duration=duration
         )
 
         if features_only:
@@ -517,7 +519,7 @@ class Data2VecAudioModel(BaseFairseqModel):
             return torch.sqrt(y.var(dim=0) + 1e-6).mean()
 
     def extract_features(
-        self, source, padding_mask, mask=False, layer=None
+        self, source, padding_mask, mask=False, layer=None, duration=None
     ):
         res = self.forward(
             source,
@@ -525,6 +527,7 @@ class Data2VecAudioModel(BaseFairseqModel):
             mask=mask,
             features_only=True,
             layer=layer,
+            duration=duration
         )
         return res
 

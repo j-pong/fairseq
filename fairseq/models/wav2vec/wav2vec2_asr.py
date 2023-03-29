@@ -546,12 +546,29 @@ class Wav2VecEncoder(FairseqEncoder):
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
 
+    def duration_to_length(self, x, d):
+        # Get valid duration
+        d = d[d != -1]
+
+        # Calculate split lengths for torch.split
+        d = d[1:] - d[:-1]
+
+        # Exception control 
+        # NOTE: convolution shrink the time length. 
+        # Thus somtimes pseudo state and current state have different length.
+        true_time = x.size(0)
+        expected_time = d.sum()
+        d[-1] = d[-1] + (true_time - expected_time)
+        
+        return d
+
     def forward(self, source, padding_mask, **kwargs):
 
         w2v_args = {
             "source": source,
             "padding_mask": padding_mask,
             "mask": self.apply_mask and self.training,
+            "duration": kwargs["duration"] if ("duration" in kwargs) and self.training else None
         }
 
         if self.is_d2v_multi:
@@ -572,19 +589,7 @@ class Wav2VecEncoder(FairseqEncoder):
                 x_new_length = []
                 for i, x_ in enumerate(x):
                     d = duration[i]
-
-                    # Get valid duration
-                    d = d[d != -1]
-
-                    # Calculate split lengths for torch.split
-                    d = d[1:] - d[:-1]
-
-                    # Exception control 
-                    # NOTE: convolution shrink the time length. 
-                    # Thus somtimes pseudo state and current state have different length.
-                    true_time = x_.size(0)
-                    expected_time = d.sum()
-                    d[-1] = d[-1] + (true_time - expected_time)
+                    d = self.duration_to_length(x_, d)
 
                     # Grouping results
                     x_ = torch.split(x_, d.tolist())
