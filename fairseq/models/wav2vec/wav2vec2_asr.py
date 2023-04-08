@@ -8,6 +8,7 @@ import copy
 import logging
 import math
 import re
+import random
 from argparse import Namespace
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -176,6 +177,14 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
     load_ema: bool = False
 
     layer_decay: float = 1
+
+    apply_prior_mask: bool = field(
+        default=False,
+        metadata={"help": "apply mask"},
+    )
+    freeze_prior_applies: int = field(
+        default=0, metadata={"help": "dont finetune wav2vec for this many updates"}
+    )
 
 
 @dataclass
@@ -456,6 +465,8 @@ class Wav2VecEncoder(FairseqEncoder):
         self.final_dropout = nn.Dropout(cfg.final_dropout)
         self.freeze_finetune_updates = cfg.freeze_finetune_updates
         self.num_updates = 0
+        self.apply_prior_mask = cfg.apply_prior_mask
+        self.freeze_prior_applies = cfg.freeze_prior_applies
 
         targ_d = None
         self.proj = None
@@ -546,6 +557,7 @@ class Wav2VecEncoder(FairseqEncoder):
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
 
+    @torch.no_grad()
     def duration_to_length(self, x, d):
         # Get valid duration
         d = d[d != -1]
@@ -564,11 +576,22 @@ class Wav2VecEncoder(FairseqEncoder):
 
     def forward(self, source, padding_mask, **kwargs):
 
+        if "duration" in kwargs and self.training and self.apply_prior_mask:
+            p = self.num_updates / self.freeze_prior_applies
+            pm_flag = torch.rand(1).item() <= p
+            if pm_flag:
+                duration = kwargs["duration"]
+            else:
+                duration = None
+        else:
+            pm_flag = None
+            duration = None
+
         w2v_args = {
             "source": source,
             "padding_mask": padding_mask,
             "mask": self.apply_mask and self.training,
-            "duration": kwargs["duration"] if ("duration" in kwargs) and self.training else None
+            "duration": duration 
         }
 
         if self.is_d2v_multi:
@@ -582,7 +605,7 @@ class Wav2VecEncoder(FairseqEncoder):
             x = res["x"]
             padding_mask = res["padding_mask"]
 
-            if "duration" in kwargs and self.training:
+            if duration is not None:
                 duration = kwargs["duration"] # [B, N]
 
                 x_new = []
@@ -620,6 +643,7 @@ class Wav2VecEncoder(FairseqEncoder):
             "encoder_out": x,  # T x B x C
             "padding_mask": padding_mask,  # B x T,
             "layer_results": res["layer_results"],
+            "pm_flag": pm_flag,
         }
 
     def forward_torchscript(self, net_input):

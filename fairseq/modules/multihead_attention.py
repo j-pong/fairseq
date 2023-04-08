@@ -476,6 +476,7 @@ class MultiheadAttention(FairseqIncrementalDecoder):
         need_weights: bool = True,
         static_kv: bool = False,
         attn_mask: Optional[Tensor] = None,
+        prior_mask: Optional[Tensor] = None,
         before_softmax: bool = False,
         need_head_weights: bool = False,
     ) -> Tuple[Tensor, Optional[Tensor]]:
@@ -708,8 +709,11 @@ class MultiheadAttention(FairseqIncrementalDecoder):
             attn_mask = attn_mask.unsqueeze(0)
             if self.onnx_trace:
                 attn_mask = attn_mask.repeat(attn_weights.size(0), 1, 1)
-            # attn_weights += attn_mask
-            attn_weights = attn_weights.masked_fill(
+            attn_weights += attn_mask
+
+        if prior_mask is not None:
+            prior_mask = prior_mask.unsqueeze(0)
+            attn_weights = prior_mask.masked_fill(
                 attn_mask,
                 float("-inf"),
             )

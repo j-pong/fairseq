@@ -175,6 +175,7 @@ class AudioFinetuningTask(AudioPretrainingTask):
                 else self.target_dictionary.bos()
             ),
             split=self.target_dictionary.unk() + 1,
+            unk=self.target_dictionary.unk(),
             batch_targets=True,
             process_label=process_label,
             label_len_fn=label_len_fn,

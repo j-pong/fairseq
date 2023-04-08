@@ -117,6 +117,12 @@ class CtcCriterion(FairseqCriterion):
 
     def forward(self, model, sample, reduce=True, **kwargs):
         net_output = model(**sample["net_input"])
+        if "pm_flag" in net_output:
+            pm_flag = net_output["pm_flag"]
+            if (pm_flag is not None) and (not pm_flag):
+                sample["target"] = sample["target_orig"]
+                sample["target_lengths"] = sample["target_lengths_orig"]
+                sample["ntokens"] = sample["ntokens_orig"]
         lprobs = model.get_normalized_probs(
             net_output, log_probs=True
         ).contiguous()  # (T, B, C) from the encoder
@@ -173,8 +179,7 @@ class CtcCriterion(FairseqCriterion):
                     zero_infinity=self.zero_infinity,
                 )
             except:
-                print(sample["target"].size(), lprobs.size())
-                exit()
+                raise ValueError(f"target.size : {sample['target'].size()} and lprobs.size : {lprobs.size()} is not matched!")
 
         ntokens = (
             sample["ntokens"] if "ntokens" in sample else target_lengths.sum().item()

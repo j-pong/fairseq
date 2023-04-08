@@ -20,6 +20,7 @@ class AddTargetDataset(BaseWrapperDataset):
         eos,
         blank,
         split,
+        unk,
         batch_targets,
         pad_state=-1,
         process_label=None,
@@ -35,6 +36,7 @@ class AddTargetDataset(BaseWrapperDataset):
         self.eos = eos
         self.blank = blank # 0
         self.split = split # 4
+        self.unk = unk # 3
         self.pad_state = pad_state
         self.process_label = process_label
         self.label_len_fn = label_len_fn
@@ -52,6 +54,7 @@ class AddTargetDataset(BaseWrapperDataset):
         state = state.long()
 
         toks, count = state.unique_consecutive(return_counts=True)
+        toks_orig = toks[(toks != self.blank) & (toks != self.pad)]
 
         # 1. split to word level segments
         toks, count = self.split_tensor(toks, self.split, count)
@@ -65,19 +68,18 @@ class AddTargetDataset(BaseWrapperDataset):
             count = torch.tensor([count[-1]])
         else:
             n_g = random.randint(5, n)
-            if n_g != n:
-                toks = self.group_target(toks, n_g)
-                count = self.group_duration(count, n_g)
+            toks = self.group_target(toks, n_g)
+            count = self.group_duration(count, n_g)
         assert len(toks) == len(count)
         count = torch.cat([torch.tensor([0]), count])
 
-        return toks, count
+        return toks_orig, toks, count
 
     def __getitem__(self, index):
         item = self.dataset[index]
         item["label"] = self.get_label(index, process_fn=self.process_label)
         if self.state is not None:
-            item["label"], item["duration"] = self.get_label_and_duration(index)
+            item["label_orig"], item["label"], item["duration"] = self.get_label_and_duration(index)
         return item
 
     def size(self, index):
@@ -98,6 +100,7 @@ class AddTargetDataset(BaseWrapperDataset):
                 new_target = new_target + ta
             target = new_target
             duration = [s["duration"] for s in samples if s["id"] in indices]
+            target_orig = [s["label_orig"] for s in samples if s["id"] in indices]
 
         if self.add_to_input:
             eos = torch.LongTensor([self.eos])
@@ -116,13 +119,19 @@ class AddTargetDataset(BaseWrapperDataset):
                     left_pad=False,
                 )
             if self.state is not None:
+                collated["target_lengths_orig"] = torch.LongTensor([len(t) for t in target_orig])
+                target_orig = data_utils.collate_tokens(target_orig, pad_idx=self.pad, left_pad=False)
+                collated["ntokens_orig"] = collated["target_lengths_orig"].sum().item()
                 duration = data_utils.collate_tokens(duration, pad_idx=-1, left_pad=False)
         else:
             collated["ntokens"] = sum([len(t) for t in target])
+            if self.state is not None:
+                collated["ntokens_orig"] = sum([len(t) for t in target_orig])
 
         collated["target"] = target
         if self.state is not None:
             collated["net_input"]["duration"] = duration
+            collated["target_orig"] = target_orig
         return collated
 
     def filter_indices_by_size(self, indices, max_sizes):
@@ -146,7 +155,8 @@ class AddTargetDataset(BaseWrapperDataset):
         for length in split_lengths:
             if length > 0:
                 ts = tensor[start_idx : start_idx + length + 1]
-                ts = ts[(ts != self.blank) & (ts != self.pad)]
+                # data filtering
+                ts = ts[(ts != self.blank) & (ts != self.pad) & (ts != self.unk)]
                 if len(ts) == 0:
                     ts = torch.tensor([self.blank])
                 split_tensors.append(ts) # for pseudo-label

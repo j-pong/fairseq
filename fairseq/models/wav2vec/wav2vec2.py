@@ -1038,7 +1038,8 @@ class TransformerEncoder(nn.Module):
                 padding_mask, self.required_seq_len_multiple, dim=-1, value=True
             )
         if duration is not None and self.training:
-            pre_compute_mask = self.prior_mask(x, duration)
+            padding_mask = padding_mask if padding_mask is not None else x.new_zeros((x.size(0), x.size(1)), dtype=torch.bool)
+            pre_compute_mask = self.prior_mask(padding_mask, duration)
         else:
             pre_compute_mask = None
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -1101,9 +1102,14 @@ class TransformerEncoder(nn.Module):
         return state_dict
     
     #TODO: duplicated with the wav2vec2_asr.py
-    def duration_to_length(self, x, d):
+    def duration_to_length(self, p, d):
+        """
+        x: [T, C] size float tensor
+        d: [N] size long tensor
+        """
         # Get valid duration
-        d = d[d != -1]
+        d_mask = d != -1
+        d = d[d_mask]
 
         # Calculate split lengths for torch.split
         d = d[1:] - d[:-1]
@@ -1111,33 +1117,51 @@ class TransformerEncoder(nn.Module):
         # Exception control 
         # NOTE: convolution shrink the time length. 
         # Thus somtimes pseudo state and current state have different length.
-        true_time = x.size(0)
+        true_time = (~p).float().sum().long()
         expected_time = d.sum()
         d[-1] = d[-1] + (true_time - expected_time)
         
-        return d
+        return d, true_time
     
-    def prior_mask(self, x, duration):
-        T = x.size(1)
-        masks = []
-        for i, x_ in enumerate(x):
-            d = duration[i]
-            d = self.duration_to_length(x_, d)
+    @torch.no_grad()
+    def prior_mask(self, padding_mask, duration):
+        """
+        x: [B, T, C] size float tensor
+        duration: [B, N] size long tensor
 
-            mask = torch.zeros(T, T, dtype=torch.bool).to(d.device)
+        Example:
+            >>> x.size(), duration.size()
+            >>>   [16, 700, 768], [16, 20]
+            >>> pint(duration)
+            >>>   tensor([[10, 20, 40, ..., T, -1, -1],[8, 12, 56, ..., T-6, -1], ....]) # -1 is padding
+
+        """
+        B, T = padding_mask.size()
+        masks = torch.zeros(B, T, T, dtype=torch.bool).to(padding_mask.device)
+        for i, p in enumerate(padding_mask):
+            d = duration[i]
+            d, T_ = self.duration_to_length(p, d)
 
             start = 0
             for length in d:
-                mask[start:start+length, start:start+length] = 1
+                masks[i, start : start+length, start : start+length] = 1
                 start += length
 
-            masks.append(~mask)
+            assert start == T_
+            if start < T:
+                masks[i, start : , :] = 1
+                masks[i, : ,start : ] = 1
 
-        masks = torch.stack(masks)
+                # import matplotlib.pyplot as plt
+                # plt.imshow(masks[i].float().detach().cpu().numpy(), aspect="auto")
+                # plt.savefig("test.png")
+                # exit()
+
+            # assert not torch.any(torch.eq(masks[i].float().sum(0), 0))
+            # assert not torch.any(torch.eq(masks[i].float().sum(1), 0))
         
-        return masks
-
-
+        return ~masks
+    
 class ConformerEncoder(TransformerEncoder):
     def build_encoder_layer(self, args):
         layer = ConformerWav2Vec2EncoderLayer(
@@ -1294,8 +1318,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 key=x,
                 value=x,
                 key_padding_mask=self_attn_padding_mask,
-                attn_mask=self_attn_mask,
-                need_weights=False,
+                # attn_mask=self_attn_mask,
+                need_weights=True,
+                prior_mask=self_attn_mask,
             )
             x = self.dropout1(x)
             x = residual + x
@@ -1316,8 +1341,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 key=x,
                 value=x,
                 key_padding_mask=self_attn_padding_mask,
-                attn_mask=self_attn_mask,
-                need_weights=False,
+                # attn_mask=self_attn_mask,
+                need_weights=True,
+                prior_mask=self_attn_mask
             )
 
             x = self.dropout1(x)
