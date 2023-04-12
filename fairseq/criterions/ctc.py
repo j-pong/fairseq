@@ -124,7 +124,7 @@ class CtcCriterion(FairseqCriterion):
                     sample["target"] = sample["target_orig"]
                     sample["target_lengths"] = sample["target_lengths_orig"]
                     sample["ntokens"] = sample["ntokens_orig"]
-            else:
+            elif "target_orig" in kwargs:
                 sample["target"] = sample["target_orig"]
                 sample["target_lengths"] = sample["target_lengths_orig"]
                 sample["ntokens"] = sample["ntokens_orig"]
