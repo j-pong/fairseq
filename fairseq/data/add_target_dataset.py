@@ -46,6 +46,7 @@ class AddTargetDataset(BaseWrapperDataset):
     def get_label(self, index, process_fn=None):
         lbl = self.labels[index]
         lbl = self.text_compressor.decompress(lbl)
+        lbl = lbl.strip().replace("@ | ", "").replace("| @ |", "|") # For TED and PF
         return lbl if process_fn is None else process_fn(lbl)
     
     def get_label_and_duration(self, index):
