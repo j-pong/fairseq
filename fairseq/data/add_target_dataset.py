@@ -54,7 +54,7 @@ class AddTargetDataset(BaseWrapperDataset):
         state = state.long()
 
         toks, count = state.unique_consecutive(return_counts=True)
-        toks_orig = toks[(toks != self.blank) & (toks != self.pad)]
+        toks_orig = toks[(toks != self.blank) & (toks != self.pad) & (toks != self.unk)]
 
         # 1. split to word level segments
         toks, count = self.split_tensor(toks, self.split, count)
