@@ -1306,6 +1306,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         modules similar to the original Transformer imlementation.
         """
         residual = x
+        self_attn_padding_mask = None if self_attn_mask is not None else self_attn_padding_mask
 
         if self.layer_norm_first:
             x = self.self_attn_layer_norm(x)
@@ -1313,7 +1314,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 query=x,
                 key=x,
                 value=x,
-                # key_padding_mask=self_attn_padding_mask,
+                key_padding_mask=self_attn_padding_mask,
                 attn_mask=self_attn_mask,
                 need_weights=True,
             )
@@ -1335,7 +1336,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 query=x,
                 key=x,
                 value=x,
-                # key_padding_mask=self_attn_padding_mask,
+                key_padding_mask=self_attn_padding_mask,
                 attn_mask=self_attn_mask,
                 need_weights=True,
             )
