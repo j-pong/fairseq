@@ -1150,12 +1150,8 @@ class TransformerEncoder(nn.Module):
             assert start == T_
             if start < T:
                 masks[i, start : , :] = 1
-                masks[i, : ,start : ] = 1
-
-                # import matplotlib.pyplot as plt
-                # plt.imshow(masks[i].float().detach().cpu().numpy(), aspect="auto")
-                # plt.savefig("test.png")
-                # exit()
+                # key padding mask
+                # masks[i, : ,start : ] = 1
 
             # assert not torch.any(torch.eq(masks[i].float().sum(0), 0))
             # assert not torch.any(torch.eq(masks[i].float().sum(1), 0))
@@ -1317,10 +1313,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 query=x,
                 key=x,
                 value=x,
-                key_padding_mask=self_attn_padding_mask,
-                # attn_mask=self_attn_mask,
+                # key_padding_mask=self_attn_padding_mask,
+                attn_mask=self_attn_mask,
                 need_weights=True,
-                prior_mask=self_attn_mask,
             )
             x = self.dropout1(x)
             x = residual + x
@@ -1340,10 +1335,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
                 query=x,
                 key=x,
                 value=x,
-                key_padding_mask=self_attn_padding_mask,
-                # attn_mask=self_attn_mask,
+                # key_padding_mask=self_attn_padding_mask,
+                attn_mask=self_attn_mask,
                 need_weights=True,
-                prior_mask=self_attn_mask
             )
 
             x = self.dropout1(x)
@@ -1361,5 +1355,31 @@ class TransformerSentenceEncoderLayer(nn.Module):
             x = self.dropout3(x)
             x = residual + x
             x = self.final_layer_norm(x)
+
+        if torch.isnan(attn).float().sum() > 0:
+            import matplotlib.pyplot as plt
+            plt.subplot(2,2,1)
+            plt.imshow(attn[-1][:, :-40].detach().cpu().numpy())
+            plt.subplot(2,2,2)
+            plt.imshow(self_attn_mask[-1][:, :-40].detach().cpu().numpy())
+            plt.subplot(2,1,2)
+            plt.plot(self_attn_padding_mask[-1].detach().cpu().numpy())
+            plt.savefig("../test.png")
+
+        # if self_attn_mask is not None and self_attn_padding_mask is not None:
+        #     if (self_attn_padding_mask[-1]).float().sum().long() > 20:
+        #         print(torch.isnan(attn).float().sum())
+        #         import matplotlib.pyplot as plt
+        #         plt.subplot(2,3,1)
+        #         plt.imshow(attn[-1].detach().cpu().numpy())
+        #         plt.subplot(2,3,2)
+        #         plt.imshow(self_attn_mask[-1].detach().cpu().numpy())
+        #         plt.subplot(2,3,3)
+        #         b, t = self_attn_padding_mask.size()
+        #         plt.imshow(self_attn_padding_mask[-1].view(1,t).repeat(t,1).detach().cpu().numpy())
+        #         plt.subplot(2,1,2)
+        #         plt.plot(self_attn_padding_mask[-1].detach().cpu().numpy())
+        #         plt.savefig("../test.png")
+        #         exit() # 3:bash -> 
 
         return x, (attn, layer_result)

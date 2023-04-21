@@ -711,13 +711,6 @@ class MultiheadAttention(FairseqIncrementalDecoder):
                 attn_mask = attn_mask.repeat(attn_weights.size(0), 1, 1)
             attn_weights += attn_mask
 
-        if prior_mask is not None:
-            prior_mask = prior_mask.unsqueeze(0)
-            attn_weights = prior_mask.masked_fill(
-                attn_mask,
-                float("-inf"),
-            )
-
         if key_padding_mask is not None:
             # don't attend to padding symbols
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
