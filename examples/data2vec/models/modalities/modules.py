@@ -278,6 +278,7 @@ class AltBlock(nn.Module):
 
         self.layer_norm_first = layer_norm_first
         self.ffn_targets = ffn_targets
+        self.num_heads = num_heads
 
         from timm.models.vision_transformer import DropPath, Mlp
 
@@ -303,16 +304,16 @@ class AltBlock(nn.Module):
         )
         self.post_mlp_dropout = nn.Dropout(post_mlp_drop, inplace=False)
 
-    def forward(self, x, padding_mask=None, alibi_bias=None):
+    def forward(self, x, padding_mask=None, alibi_bias=None, prior_mask=None):
         if self.layer_norm_first:
-            x = x + self.drop_path(self.attn(self.norm1(x), padding_mask, alibi_bias))
+            x = x + self.drop_path(self.attn(self.norm1(x), padding_mask, alibi_bias, prior_mask))
             r = x = self.mlp(self.norm2(x))
             t = x
             x = r + self.drop_path(self.post_mlp_dropout(x))
             if not self.ffn_targets:
                 t = x
         else:
-            x = x + self.drop_path(self.attn(x, padding_mask, alibi_bias))
+            x = x + self.drop_path(self.attn(x, padding_mask, alibi_bias, prior_mask))
             r = x = self.norm1(x)
             x = self.mlp(x)
             t = x
@@ -351,7 +352,7 @@ class AltAttention(nn.Module):
                 torch.log(10 * torch.ones((num_heads, 1, 1))), requires_grad=True
             )
 
-    def forward(self, x, padding_mask=None, alibi_bias=None):
+    def forward(self, x, padding_mask=None, alibi_bias=None, prior_mask=None):
         B, N, C = x.shape
         qkv = (
             self.qkv(x)
@@ -384,6 +385,11 @@ class AltAttention(nn.Module):
         if padding_mask is not None and padding_mask.any():
             attn = attn.masked_fill(
                 padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool),
+                float("-inf"),
+            )
+        if prior_mask is not None and prior_mask.any():
+            attn = attn.masked_fill(
+                prior_mask,
                 float("-inf"),
             )
 

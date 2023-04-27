@@ -391,6 +391,62 @@ class Data2VecMultiModel(BaseFairseqModel):
             modalities = task.supported_modalities
         return cls(cfg, modalities, task=task, skip_ema=cfg.skip_ema)
 
+    def duration_to_length(self, p, d):
+        """
+        x: [T, C] size float tensor
+        d: [N] size long tensor
+        """
+        # Get valid duration
+        d_mask = d != -1
+        d = d[d_mask]
+
+        # Calculate split lengths for torch.split
+        d = d[1:] - d[:-1]
+
+        # Exception control 
+        # NOTE: convolution shrink the time length. 
+        # Thus somtimes pseudo state and current state have different length.
+        true_time = (~p).float().sum().long()
+        expected_time = d.sum()
+        d[-1] = d[-1] + (true_time - expected_time)
+        
+        return d, true_time
+    
+    @torch.no_grad()
+    def prior_mask(self, padding_mask, duration):
+        """
+        x: [B, T, C] size float tensor
+        duration: [B, N] size long tensor
+
+        Example:
+            >>> x.size(), duration.size()
+            >>>   [16, 700, 768], [16, 20]
+            >>> pint(duration)
+            >>>   tensor([[10, 20, 40, ..., T, -1, -1],[8, 12, 56, ..., T-6, -1], ....]) # -1 is padding
+
+        """
+        B, T = padding_mask.size()
+        masks = torch.zeros(B, T, T, dtype=torch.bool).to(padding_mask.device)
+        for i, p in enumerate(padding_mask):
+            d = duration[i]
+            d, T_ = self.duration_to_length(p, d)
+
+            start = 0
+            for length in d:
+                masks[i, start : start+length, start : start+length] = 1
+                start += length
+
+            assert start == T_
+            if start < T:
+                masks[i, start : , :] = 1
+                # key padding mask
+                # masks[i, : ,start : ] = 1
+
+            # assert not torch.any(torch.eq(masks[i].float().sum(0), 0))
+            # assert not torch.any(torch.eq(masks[i].float().sum(1), 0))
+        
+        return ~masks
+
     def forward(
         self,
         source,
@@ -403,6 +459,7 @@ class Data2VecMultiModel(BaseFairseqModel):
         force_remove_masked=False,
         remove_extra_tokens=True,
         precomputed_mask=None,
+        duration=None,
     ):
         if mode is None:
             assert self.cfg.supported_modality is not None
@@ -452,10 +509,18 @@ class Data2VecMultiModel(BaseFairseqModel):
                     )
                     ab = ab * scale.type_as(ab)
 
+                if duration is not None and self.training:
+                    padding_mask = padding_mask if padding_mask is not None else x.new_zeros((x.size(0), x.size(1)), dtype=torch.bool)
+                    prior_mask = self.prior_mask(padding_mask, duration)
+                    prior_mask = prior_mask.repeat(blk.num_heads, 1, 1) if prior_mask is not None else None
+                else:
+                    prior_mask = None
+
                 x, lr = blk(
                     x,
                     padding_mask=masked_padding_mask,
                     alibi_bias=ab,
+                    prior_mask=prior_mask,
                 )
                 if features_only:
                     layer_results.append(lr)
@@ -781,7 +846,7 @@ class Data2VecMultiModel(BaseFairseqModel):
             return torch.sqrt(y.var(dim=0) + 1e-6).mean()
 
     def extract_features(
-        self, source, mode=None, padding_mask=None, mask=False, remove_extra_tokens=True
+        self, source, mode=None, padding_mask=None, mask=False, remove_extra_tokens=True, duration=None
     ):
         res = self.forward(
             source,
@@ -790,6 +855,7 @@ class Data2VecMultiModel(BaseFairseqModel):
             mask=mask,
             features_only=True,
             remove_extra_tokens=remove_extra_tokens,
+            duration=duration
         )
         return res
 
