@@ -584,14 +584,14 @@ class Wav2VecEncoder(FairseqEncoder):
             else:
                 duration = None
         else:
-            pm_flag = None
+            pm_flag = False 
             duration = None
 
         w2v_args = {
             "source": source,
             "padding_mask": padding_mask,
             "mask": self.apply_mask and self.training,
-            "duration": duration 
+            "duration": None # TODO: do not apply the prior mask to the model
         }
 
         if self.is_d2v_multi:
@@ -605,31 +605,31 @@ class Wav2VecEncoder(FairseqEncoder):
             x = res["x"]
             padding_mask = res["padding_mask"]
 
-            # if duration is not None:
-            #     duration = kwargs["duration"] # [B, N]
+            if duration is not None:
+                duration = kwargs["duration"] # [B, N]
 
-            #     x_new = []
-            #     x_new_length = []
-            #     for i, x_ in enumerate(x):
-            #         d = duration[i]
-            #         d = self.duration_to_length(x_, d)
+                x_new = []
+                x_new_length = []
+                for i, x_ in enumerate(x):
+                    d = duration[i]
+                    d = self.duration_to_length(x_, d)
 
-            #         # Grouping results
-            #         x_ = torch.split(x_, d.tolist())
+                    # Grouping results
+                    x_ = torch.split(x_, d.tolist())
 
-            #         x_new = x_new + list(x_)
-            #         x_new_length.append(d)
+                    x_new = x_new + list(x_)
+                    x_new_length.append(d)
 
-            #     x = torch.nn.utils.rnn.pad_sequence(
-            #         x_new, 
-            #         batch_first=True, 
-            #         padding_value=0
-            #     )
-            #     x_new_length = torch.cat(x_new_length)
+                x = torch.nn.utils.rnn.pad_sequence(
+                    x_new, 
+                    batch_first=True, 
+                    padding_value=0
+                )
+                x_new_length = torch.cat(x_new_length)
 
-            #     bsz, tsz, _ = x.size()
-            #     padding_base = torch.arange(tsz).expand(bsz, tsz).to(x.device)
-            #     padding_mask = padding_base >= x_new_length.unsqueeze(1)
+                bsz, tsz, _ = x.size()
+                padding_base = torch.arange(tsz).expand(bsz, tsz).to(x.device)
+                padding_mask = padding_base >= x_new_length.unsqueeze(1)
 
             # B x T x C -> T x B x C
             x = x.transpose(0, 1)

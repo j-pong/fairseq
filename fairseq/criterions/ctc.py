@@ -119,9 +119,10 @@ class CtcCriterion(FairseqCriterion):
         net_output = model(**sample["net_input"])
         pm_flag = net_output["pm_flag"] if "pm_flag" in net_output else None
         if "target_orig" in sample:
-            sample["target"] = sample["target_orig"]
-            sample["target_lengths"] = sample["target_lengths_orig"]
-            sample["ntokens"] = sample["ntokens_orig"]
+            if not pm_flag:
+                sample["target"] = sample["target_orig"]
+                sample["target_lengths"] = sample["target_lengths_orig"]
+                sample["ntokens"] = sample["ntokens_orig"]
 
         lprobs = model.get_normalized_probs(
             net_output, log_probs=True
