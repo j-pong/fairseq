@@ -392,6 +392,7 @@ class AltAttention(nn.Module):
                 prior_mask,
                 float("-inf"),
             )
+            attn = attn * prior_mask
 
         attn = attn.softmax(dim=-1, dtype=torch.float32).to(dtype=dtype)
         attn = self.attn_drop(attn)
