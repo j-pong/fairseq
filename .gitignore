@@ -18,7 +18,8 @@ env/
 build/
 develop-eggs/
 dist/
-downloads/
+downloads
+data
 eggs/
 .eggs/
 lib/
